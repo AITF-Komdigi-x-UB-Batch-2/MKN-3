@@ -1,0 +1,43 @@
+# ============================================================
+# .gitignore — MKN3 Social Welfare RAG Project (Data Allowed)
+# ============================================================
+
+# ── Python & Environment ───────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+.env
+*.log
+
+
+# ── AI Models (Large Files - DILARANG PUSH) ────────────────
+# GitHub menolak file > 100MB
+*.gguf
+*.bin
+*.pt
+model_cache/
+datalab/
+huggingface/
+surya/
+
+# ── Database & Storage (Lokal Saja) ────────────────────────
+qdrant_db/
+eda_output/
+Qwen_CPT/
+
+# ── Exports & Results ──────────────────────────────────────
+*.xlsx
+*.csv
+colab_ingestion_gemma2.ipynb
+convert_hf_to_gguf.py
+
+# !metadata_knowledge_base.json
+
+# ── IDE & System ──────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,26 @@
+{
+  "total_cases": 1,
+  "averages": {
+    "overall_score": 0.85,
+    "main_status_score": 1.0,
+    "evidence_score": 0.5,
+    "output_contract_score": 1.0,
+    "nominal_score": 1.0
+  },
+  "failed_cases": [
+    {
+      "case_id": "GT_PKHPLUS_001",
+      "overall_score": 0.85,
+      "failed_checks": [
+        "evidence:PKH Plus:Juknis PKH Plus:hal13"
+      ]
+    }
+  ],
+  "timestamp": "20260520_184215",
+  "ground_truth": "D:\\AITF-KEMISKINAN\\KEMISKINAN\\MKN3_CSV\\evaluation\\ground_truth_rag_cases.jsonl",
+  "nominal_source": "D:\\AITF-KEMISKINAN\\KEMISKINAN\\MKN3_CSV\\chunked_data\\juknis_extracted_normalized.jsonl",
+  "result_path": "D:\\AITF-KEMISKINAN\\KEMISKINAN\\MKN3_CSV\\evaluation\\results\\rag_eval_20260520_184215.jsonl",
+  "case_ids": [
+    "GT_PKHPLUS_001"
+  ]
+}
