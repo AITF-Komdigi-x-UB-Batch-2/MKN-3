@@ -57,7 +57,7 @@ if not client.collection_exists(COLLECTION_NAME):
                         text=doc, model=MODEL_NAME
                     )
                 },
-                payload=meta
+                payload={**meta, "text": doc}
             )
             for i, (doc, meta) in enumerate(zip(documents, metadata))
         ]
