@@ -21,10 +21,10 @@ BASE_DIR = Path(__file__).resolve().parent
 # Contoh .env: HF_HOME=D:\path\to\cache
 if os.getenv("HF_HOME"):
     _hf_home = os.environ["HF_HOME"]
-    os.environ.setdefault("HF_HUB_CACHE",     os.path.join(_hf_home, "hub"))
-    os.environ.setdefault("SURYA_CACHE_DIR",  os.path.join(_hf_home, "..", "surya"))
-    os.environ.setdefault("MODEL_CACHE_DIR",  os.path.join(_hf_home, "..", "datalab"))
-    os.environ.setdefault("DATALAB_CACHE_DIR",os.path.join(_hf_home, "..", "datalab"))
+    os.environ.setdefault("HF_HUB_CACHE", os.path.join(_hf_home, "hub"))
+    os.environ.setdefault("SURYA_CACHE_DIR", os.path.join(_hf_home, "..", "surya"))
+    os.environ.setdefault("MODEL_CACHE_DIR", os.path.join(_hf_home, "..", "datalab"))
+    os.environ.setdefault("DATALAB_CACHE_DIR", os.path.join(_hf_home, "..", "datalab"))
 
 # Optimasi Memori GPU
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -37,70 +37,73 @@ os.environ["DETECTOR_BATCH_SIZE"] = "1"
 # CHUNKED_DIR moved to KONFIGURASI CHUNKED DATA
 
 
-OUTPUT_JSON   = str(BASE_DIR / "metadata_knowledge_base.json")
-OUTPUT_XLSX   = str(BASE_DIR / "metadata_knowledge_base.xlsx")
+OUTPUT_JSON = str(BASE_DIR / "metadata_knowledge_base.json")
+OUTPUT_XLSX = str(BASE_DIR / "metadata_knowledge_base.xlsx")
 
 # ============================================================
 # KONFIGURASI OCR (Stage A)
 # ============================================================
-TEXT_CHAR_THRESHOLD = 30    # Batas karakter untuk deteksi teks vs scan
-OCR_LANG = "ind+eng"        # Bahasa Tesseract
-OCR_DPI  = 300              # Resolusi konversi halaman scan
+TEXT_CHAR_THRESHOLD = 30  # Batas karakter untuk deteksi teks vs scan
+OCR_LANG = "ind+eng"  # Bahasa Tesseract
+OCR_DPI = 300  # Resolusi konversi halaman scan
 
 # ============================================================
 # KONFIGURASI CHUNKING (Stage C)
 # ============================================================
-CHUNK_SIZE    = 1500
-CHUNK_OVERLAP = 300
+CHUNK_SIZE = 2000
+CHUNK_OVERLAP = 500
 
 # ============================================================
 # KONFIGURASI CHUNKED DATA (JSONL)
 # ============================================================
-CHUNKED_DIR   = str(BASE_DIR / "chunked_data")
+CHUNKED_DIR = str(BASE_DIR / "chunked_data")
 
 
 # ============================================================
 # KONFIGURASI EMBEDDING & VECTOR DB (Stage D)
 # ============================================================
-QDRANT_DIR        = str(BASE_DIR / "qdrant_db")
-QDRANT_URL        = os.getenv("QDRANT_URL", "http://localhost:6333")
+QDRANT_DIR = str(BASE_DIR / "qdrant_db")
+QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "kebijakan_sosial_tim4_bge-m3")
 
 # --- Model untuk LOCAL DEVELOPMENT ---
-EMBED_MODEL_NAME  = os.getenv("EMBED_MODEL_NAME", "BAAI/bge-m3")
-EMBED_DIMENSIONS  = int(os.getenv("EMBED_DIMENSIONS", "1024"))
+EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "BAAI/bge-m3")
+EMBED_DIMENSIONS = int(os.getenv("EMBED_DIMENSIONS", "1024"))
 
 # --- Model untuk PRODUCTION (RTX 5090 VM / SentenceTransformer) ---
 # EMBED_MODEL_NAME  = "BAAI/bge-multilingual-gemma2"   # 3584 dimensi
 # EMBED_DIMENSIONS  = 3584
 
-EMBED_BATCH_SIZE  = 1        # Batch size=1 untuk hemat VRAM
-UPLOAD_BATCH_SIZE = 100      # Jumlah dokumen per upload ke Qdrant
+EMBED_BATCH_SIZE = 1  # Batch size=1 untuk hemat VRAM
+UPLOAD_BATCH_SIZE = 100  # Jumlah dokumen per upload ke Qdrant
 
 # ============================================================
 # KONFIGURASI RETRIEVAL & RERANKING (Stage E)
 # ============================================================
 
 # --- Model untuk LOCAL DEVELOPMENT ---
-RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
+# RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
+RERANKER_MODEL_NAME = os.getenv(
+    "RERANKER_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+)
 
 # --- Model untuk PRODUCTION (RTX 5090 VM) ---
 # RERANKER_MODEL_NAME = "BAAI/bge-reranker-v2-gemma"
 
-RETRIEVAL_TOP_K     = 15     # Kandidat awal dari semantic search
-RERANK_TOP_N        = 7     # Finalis setelah reranking
+RETRIEVAL_TOP_K = 7
+RERANK_TOP_N = 4
 
 # ============================================================
 # KONFIGURASI GENERATION / LLM (Stage F)
 # ============================================================
-OLLAMA_BASE_URL         = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_GENERATION_MODEL = os.getenv("OLLAMA_GENERATION_MODEL", "mkn1-model-qwen3v1")
-OLLAMA_MODEL            = os.getenv("OLLAMA_MODEL", OLLAMA_GENERATION_MODEL)
-OLLAMA_TEMPERATURE      = float(os.getenv("OLLAMA_TEMPERATURE", "0.0"))
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", OLLAMA_GENERATION_MODEL)
+OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.0"))
 
-LLM_PROVIDER            = os.getenv("LLM_PROVIDER", "ollama")
-HF_GENERATION_MODEL     = os.getenv("HF_GENERATION_MODEL", "")
-HF_TOKEN                = os.getenv("HF_TOKEN", "")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
+HF_GENERATION_MODEL = os.getenv("HF_GENERATION_MODEL", "")
+HF_TOKEN = os.getenv("HF_TOKEN", "")
 
 # ============================================================
 # PROMPT TEMPLATES
@@ -146,7 +149,7 @@ PROMPT_TEMPLATE = (
     f"{STRICT_RAG_OUTPUT_CONTRACT}\n"
     "## Ringkasan Profil Warga"
 )
- 
+
 POLICY_PROMPT_TEMPLATE = (
     "{system_prompt}\n\n"
     "=== KONTEKS DOKUMEN KEBIJAKAN ===\n"
@@ -162,7 +165,7 @@ POLICY_PROMPT_TEMPLATE = (
     f"{STRICT_RAG_OUTPUT_CONTRACT}\n"
     "## Ringkasan Profil Warga"
 )
- 
+
 RANKING_SYSTEM_PROMPT = """Anda adalah SIRA, asisten rekomendasi program bantuan sosial Jawa Timur.
  
 TUGAS: Evaluasi profil warga terhadap KEENAM program berikut berdasarkan KONTEKS DOKUMEN yang diberikan:
@@ -278,9 +281,10 @@ CEK AKHIR SEBELUM MENJAWAB:
 # ============================================================
 # KONFIGURASI PDF EXTRACTION (Stage 00 — Surya OCR)
 # ============================================================
-PDF_INPUT_DIR           = str(BASE_DIR / "pdf_input")
-SURYA_BATCH_SIZE        = 2       # Sangat rendah untuk menghindari OOM pada RTX 3050
-OCR_CONFIDENCE_THRESHOLD = 0.25   # Minimum confidence Surya OCR
+PDF_INPUT_DIR = str(BASE_DIR / "pdf_input")
+SURYA_BATCH_SIZE = 2  # Sangat rendah untuk menghindari OOM pada RTX 3050
+OCR_CONFIDENCE_THRESHOLD = 0.25  # Minimum confidence Surya OCR
+
 
 # ============================================================
 # UTILITY
@@ -297,14 +301,21 @@ def configure_utf8_stdio():
 def ensure_dirs():
     # List folder yang perlu dipastikan ada
     dirs = [
-        CHUNKED_DIR, QDRANT_DIR, PDF_INPUT_DIR,
+        CHUNKED_DIR,
+        QDRANT_DIR,
+        PDF_INPUT_DIR,
     ]
-    
+
     # Tambahkan cache dirs hanya jika diset secara eksplisit di env
-    for env_var in ["MODEL_CACHE_DIR", "SURYA_CACHE_DIR", "HF_HOME", "DATALAB_CACHE_DIR"]:
+    for env_var in [
+        "MODEL_CACHE_DIR",
+        "SURYA_CACHE_DIR",
+        "HF_HOME",
+        "DATALAB_CACHE_DIR",
+    ]:
         if env_var in os.environ:
             dirs.append(os.environ[env_var])
-            
+
     for d in dirs:
         os.makedirs(d, exist_ok=True)
 

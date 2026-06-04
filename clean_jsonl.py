@@ -26,9 +26,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 INPUT_FILE  = "chunked_data/juknis_extracted.jsonl"
 OUTPUT_FILE = "chunked_data/juknis_extracted_normalized.jsonl"
 
-CHUNK_SIZE    = 800
-CHUNK_OVERLAP = 150
-RESPLIT_TRIGGER_CHARS = 1500
+CHUNK_SIZE    = 2000
+CHUNK_OVERLAP = 500
+RESPLIT_TRIGGER_CHARS = 2001  # Lebih dari CHUNK_SIZE agar hanya re-split jika benar-benar lewat hard cap
 MIN_TEXT_CHARS        = 20
 MIN_SUBCHUNK_CHARS    = 180
 LOW_INFORMATION_CHARS = 220
