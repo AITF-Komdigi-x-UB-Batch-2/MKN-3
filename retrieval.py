@@ -12,16 +12,14 @@
 # ============================================================
 
 from __future__ import annotations
-
+import re
 import warnings
 import logging
 from dataclasses import dataclass, field
 
 warnings.filterwarnings("ignore")
 
-from qdrant_client import QdrantClient
-from qdrant_client.models import Filter, FieldCondition, MatchAny
-from sentence_transformers import CrossEncoder
+from qdrant_client import QdrantClient, models
 
 import config
 
@@ -48,10 +46,6 @@ class RetrievalResult:
 class PolicyRetriever:
     """
     Semantic search + reranking untuk dokumen kebijakan sosial.
-
-    Langkah:
-    1. QdrantClient.query_points (fastembed named vector)
-    2. CrossEncoder reranking (ms-marco atau bge-reranker)
     """
 
     def __init__(self):
@@ -65,30 +59,42 @@ class PolicyRetriever:
         logger.info("✅ Qdrant terhubung — collection: %s, vector: %s",
                     self.collection, self.vector_name)
 
-        # Cross-encoder reranker
-        logger.info("📦 Memuat reranker: %s ...", config.RERANKER_MODEL_NAME)
-        self.reranker = CrossEncoder(
-            config.RERANKER_MODEL_NAME,
-            max_length=512,
-        )
-        logger.info("✅ Reranker siap.")
+    def filter_program(self, query: str) -> str | None:
+        query_lower = query.lower()
+        
+        # Cari skor PKH Plus / PKH+
+        pkh_score = 0.0
+        pkh_match = re.search(r'(?:skor\s+)?pkh\s*\+?\s*(?:plus)?\s*:\s*([0-9.]+)', query_lower)
+        if pkh_match:
+            pkh_score = float(pkh_match.group(1))
+            
+        # Cari skor ASPD
+        aspd_score = 0.0
+        aspd_match = re.search(r'(?:skor\s+)?aspd\s*:\s*([0-9.]+)', query_lower)
+        if aspd_match:
+            aspd_score = float(aspd_match.group(1))
+            
+        if pkh_score == 0.0 and aspd_score == 0.0:
+            return None
+            
+        if pkh_score > aspd_score:
+            return "PKH Plus"
+        else:
+            return "ASPD"
 
     def retrieve(
         self,
         query: str,
         top_k: int = config.RETRIEVAL_TOP_K,
-        top_n: int = config.RERANK_TOP_N,
         allowed_sources: list[str] | None = None,
     ) -> list[RetrievalResult]:
         """
         Jalankan retrieval pipeline:
           1. Semantic search ke Qdrant (top_k kandidat)
-          2. Cross-encoder reranking → ambil top_n terbaik
 
         Args:
             query: teks query (profil warga / pertanyaan)
             top_k: jumlah kandidat dari embedding search
-            top_n: jumlah hasil final setelah reranking
             allowed_sources: list nilai field 'sumber' yang diizinkan
                              (Qdrant native filter, MatchAny)
         Returns:
@@ -99,49 +105,53 @@ class PolicyRetriever:
             return []
 
         # ── Build Qdrant filter ──────────────────────────────
-        qdrant_filter = None
+        conditions = []
         if allowed_sources:
-            qdrant_filter = Filter(
-                must=[
-                    FieldCondition(
-                        key="sumber",
-                        match=MatchAny(any=allowed_sources),
-                    )
-                ]
+            conditions.append(
+                models.FieldCondition(
+                    key="sumber",
+                    match=models.MatchAny(any=allowed_sources),
+                )
             )
+        else:
+            detected_program = self.filter_program(query)
+            if detected_program:
+                conditions.append(
+                    models.FieldCondition(
+                        key="nama_bansos",
+                        match=models.MatchValue(value=detected_program),
+                    )
+                )
+        qdrant_filter = models.Filter(must=conditions) if conditions else None
+
 
         # ── Semantic search ──────────────────────────────────
-        from qdrant_client import models as qmodels
-        logger.debug("🔎 Semantic search top_k=%d ...", top_k)
+        logger.debug("🔎 Semantic-only search limit=%d ...", top_k)
         hits = self.client.query_points(
             collection_name=self.collection,
-            query=qmodels.Document(text=query, model=config.EMBED_MODEL_NAME),
+            query=models.Document(text=query, model=config.EMBED_MODEL_NAME),
             using=self.vector_name,
             limit=top_k,
             query_filter=qdrant_filter,
         ).points
-
+        
         if not hits:
             logger.warning("⚠️ Tidak ada hasil dari Qdrant.")
             return []
-
-        # ── Cross-encoder reranking ──────────────────────────
-        texts = [h.payload.get("text", "") for h in hits]
-        pairs = [(query, t) for t in texts]
-
-        scores = self.reranker.predict(pairs)
-
-        # Gabungkan skor embedding + reranker
-        results = [
-            RetrievalResult(
-                text=texts[i],
-                metadata={k: v for k, v in hits[i].payload.items() if k != "text"},
-                score=float(scores[i]),
-                embed_score=float(hits[i].score),
-            )
-            for i in range(len(hits))
-        ]
-
-        # Urutkan descending by rerank score, ambil top_n
-        results.sort(key=lambda r: r.score, reverse=True)
-        return results[:top_n]
+        
+        results = []
+        for h in hits:
+            payload = h.payload or {}
+            text = payload.get("text", "")
+            # skema metadata selain text (content)
+            metadata = {k: v for k, v in payload.items() if k != "text"}
+            results.append(RetrievalResult(
+                text=text,
+                metadata=metadata,
+                embed_score=float(h.score),
+            ))
+        logger.info(
+            "🔎 Semantic search selesai: %d hasil dikembalikan (top score=%.4f).",
+            len(results), results[0].score if results else 0.0
+        )
+        return results
