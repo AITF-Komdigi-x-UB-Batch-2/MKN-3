@@ -25,7 +25,7 @@
 #   [Bug 3] Pemfilteran PROGRAM_LABELS dipindahkan ke native Qdrant filter
 #           (FieldCondition/MatchAny) via parameter allowed_sources di
 #           retriever.retrieve(). top_k default dinaikkan ke min 40 agar
-#           semua 6 program terwakili di pool reranking.
+#           semua 6 program terwakili di pool retrieval.
 #   [Bug 4] Seragamkan nama tim → "Tim 3 Universitas Brawijaya".
 # ============================================================
 
@@ -42,7 +42,7 @@ os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 # PINDAHKAN KE ATAS: Agar HF_HOME di config aktif sebelum library AI lain di-import
 from config import (
     QDRANT_URL, QDRANT_COLLECTION,
-    EMBED_MODEL_NAME, RERANKER_MODEL_NAME,
+    EMBED_MODEL_NAME,
     OLLAMA_BASE_URL, OLLAMA_GENERATION_MODEL, OLLAMA_TEMPERATURE,
     PROMPT_TEMPLATE, POLICY_PROMPT_TEMPLATE,
     RETRIEVAL_TOP_K, RERANK_TOP_N,
@@ -55,7 +55,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 
 from langchain_ollama import OllamaLLM
-from retrieval import PolicyRetriever, RetrievalResult
+# from retrieval import PolicyRetriever  # RERANKER OFF: PolicyRetriever memuat CrossEncoder saat startup.
+from retrieval import RetrievalResult
 from generation import (
     PROGRAM_LABELS,
     build_context_grouped,
@@ -172,13 +173,28 @@ RETRIEVE_SYSTEM_PROMPT = (
 # ============================================================
 
 class AppState:
-    retriever: Optional[PolicyRetriever] = None
+    retriever: Optional[object] = None
     llm: Optional[OllamaLLM] = None
     ready: bool = False
     startup_error: Optional[str] = None
     startup_time: Optional[float] = None
 
 state = AppState()
+
+
+class SemanticOnlyRetriever:
+    """Retriever ringan untuk Qdrant semantic search tanpa CrossEncoder reranker."""
+
+    def __init__(self):
+        from qdrant_client import QdrantClient
+
+        logger.info("📦 Inisialisasi SemanticOnlyRetriever...")
+        self.client = QdrantClient(url=QDRANT_URL)
+        self.client.set_model(EMBED_MODEL_NAME)
+        self.vector_name = list(self.client.get_fastembed_vector_params().keys())[0]
+        self.collection = QDRANT_COLLECTION
+        logger.info("✅ Qdrant terhubung — collection: %s, vector: %s",
+                    self.collection, self.vector_name)
 
 
 # ============================================================
@@ -190,7 +206,9 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 SIRA RAG Service starting up...")
     t0 = time.time()
     try:
-        state.retriever = PolicyRetriever()
+        # RERANKER OFF: PolicyRetriever memuat CrossEncoder reranker saat startup.
+        # state.retriever = PolicyRetriever()
+        state.retriever = SemanticOnlyRetriever()
         state.llm = OllamaLLM(
             base_url=OLLAMA_BASE_URL,
             model=OLLAMA_GENERATION_MODEL,
@@ -219,7 +237,7 @@ app = FastAPI(
     description=(
         "**SIRA — Sistem Rekomender Intervensi & Kebijakan Program Sosial**\n\n"
         "REST API untuk sistem rekomendasi program bantuan sosial berbasis RAG.\n\n"
-        "Pipeline: `Qdrant Semantic Search` → `Cross-Encoder Reranking` → `Ollama LLM Generation`\n\n"
+        "Pipeline: `Qdrant Semantic Search` → `Ollama LLM Generation`\n\n"
         "Tim 3 Universitas Brawijaya × DISKOMINFO Jawa Timur (AITF 2026)"
     ),
     version="3.0.0",
@@ -250,7 +268,7 @@ class RecommendRequest(BaseModel):
         description="Hasil scoring MKN1 (opsional). Sertakan desil dan skor dari sistem MKN1."
     )
     top_k: Optional[int] = Field(default=None, ge=5, le=100, description=f"Kandidat awal semantic search (default: {RETRIEVAL_TOP_K})")
-    top_n: Optional[int] = Field(default=None, ge=1, le=20, description=f"Finalis setelah reranking (default: {RERANK_TOP_N})")
+    top_n: Optional[int] = Field(default=None, ge=1, le=20, description=f"Finalis semantic search (default: {RERANK_TOP_N})")
 
 
 class AskRequest(BaseModel):
@@ -295,11 +313,11 @@ class RetrieveOnlyRequest(BaseModel):
     )
     top_k: Optional[int] = Field(
         default=None, ge=1, le=100,
-        description=f"Kandidat awal dari Qdrant sebelum reranking (default: {RETRIEVAL_TOP_K})"
+        description=f"Kandidat dari Qdrant semantic search (default: {RETRIEVAL_TOP_K})"
     )
     top_n: Optional[int] = Field(
         default=None, ge=1, le=50,
-        description=f"Finalis setelah cross-encoder reranking (default: {RERANK_TOP_N})"
+        description=f"Finalis semantic search (default: {RERANK_TOP_N})"
     )
     filter_programs_only: bool = Field(
         default=False,
@@ -413,7 +431,7 @@ class MKN1Request(BaseModel):
     skor: Optional[SkorMKN1] = None
     kesimpulan: Optional[KesimpulanMKN1] = None
     top_k: Optional[int] = Field(default=None, ge=5, le=100, description=f"Kandidat awal semantic search (default: {RETRIEVAL_TOP_K})")
-    top_n: Optional[int] = Field(default=None, ge=1, le=20, description=f"Finalis setelah reranking (default: {RERANK_TOP_N})")
+    top_n: Optional[int] = Field(default=None, ge=1, le=20, description=f"Finalis semantic search (default: {RERANK_TOP_N})")
 
 
 # ============================================================
@@ -448,7 +466,7 @@ class SourceDocument(BaseModel):
     sumber: str
     judul_halaman: Optional[str] = None
     page_number: Optional[str] = None
-    rerank_score: float
+    rerank_score: float  # Legacy field; semantic-only mode mengisi nilai ini dari embed_score.
     embed_score: float
     text_preview: str
 
@@ -459,7 +477,7 @@ class RetrieveChunkResult(BaseModel):
     sumber: str
     judul_halaman: Optional[str] = None
     page_number: Optional[str] = None
-    rerank_score: float
+    rerank_score: float  # Legacy field; semantic-only mode mengisi nilai ini dari embed_score.
     embed_score: float
     text: str           # Teks lengkap chunk (bukan preview)
     metadata: dict      # Seluruh metadata payload dari Qdrant
@@ -730,6 +748,64 @@ def to_source_docs(results: list[RetrievalResult]) -> list[SourceDocument]:
     ]
 
 
+def retrieve_semantic_only(
+    query: str,
+    top_k: int,
+    top_n: int,
+    allowed_sources: Optional[list[str]] = None,
+) -> list[RetrievalResult]:
+    """
+    Jalankan Qdrant semantic search tanpa cross-encoder reranker.
+
+    Catatan:
+    - Field `score` tetap diisi agar response lama tetap kompatibel.
+    - Dalam mode ini, `score == embed_score`.
+    """
+    if not query or not query.strip():
+        logger.warning("⚠️ Query kosong, skip retrieval.")
+        return []
+
+    from qdrant_client import models as qmodels
+    from qdrant_client.models import Filter, FieldCondition, MatchAny
+
+    qdrant_filter = None
+    if allowed_sources:
+        qdrant_filter = Filter(
+            must=[
+                FieldCondition(
+                    key="sumber",
+                    match=MatchAny(any=allowed_sources),
+                )
+            ]
+        )
+
+    limit = max(top_k, top_n)
+    logger.debug("🔎 Semantic-only search limit=%d ...", limit)
+    hits = state.retriever.client.query_points(
+        collection_name=state.retriever.collection,
+        query=qmodels.Document(text=query, model=EMBED_MODEL_NAME),
+        using=state.retriever.vector_name,
+        limit=limit,
+        query_filter=qdrant_filter,
+    ).points
+
+    if not hits:
+        logger.warning("⚠️ Tidak ada hasil dari Qdrant.")
+        return []
+
+    results = [
+        RetrievalResult(
+            text=h.payload.get("text", ""),
+            metadata={k: v for k, v in h.payload.items() if k != "text"},
+            score=float(h.score),
+            embed_score=float(h.score),
+        )
+        for h in hits
+    ]
+    results.sort(key=lambda r: r.embed_score, reverse=True)
+    return results[:top_n]
+
+
 def parse_llm_json(raw: str) -> dict:
     """
     Ekstrak dan parse JSON dari output LLM.
@@ -924,7 +1000,7 @@ def health():
             "qdrant_url": QDRANT_URL,
             "collection": QDRANT_COLLECTION,
             "embed_model": EMBED_MODEL_NAME,
-            "reranker": RERANKER_MODEL_NAME,
+            # "reranker": RERANKER_MODEL_NAME,  # Dinonaktifkan untuk uji coba semantic-only.
             "llm_model": OLLAMA_GENERATION_MODEL,
             "default_top_k": RETRIEVAL_TOP_K,
             "default_top_n": RERANK_TOP_N,
@@ -963,7 +1039,7 @@ def recommend(req: RecommendRequest):
 
     try:
         # [Bug 3 Fix] top_k dinaikkan ke minimal 40 agar semua 6 program
-        # terwakili dalam pool reranking, terutama dokumen ASPD dan KIP JAWARA
+        # terwakili dalam pool semantic search, terutama dokumen ASPD dan KIP JAWARA
         # yang kadang kalah saing dengan PKH Plus di embedding score.
         top_k = max(req.top_k or RETRIEVAL_TOP_K, 40)
         top_n = req.top_n or RERANK_TOP_N
@@ -979,7 +1055,14 @@ def recommend(req: RecommendRequest):
         # [Bug 3 Fix] Filter 6 program utama dilakukan secara native di Qdrant
         # via allowed_sources — bukan post-filter list comprehension.
         # Dengan ini kuota top_k tidak terbuang oleh dokumen luar program.
-        results = state.retriever.retrieve(
+        # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
+        # results = state.retriever.retrieve(
+        #     query_for_retrieval,
+        #     top_k=top_k,
+        #     top_n=top_n,
+        #     allowed_sources=list(PROGRAM_LABELS.keys()),   # [Bug 3 Fix]
+        # )
+        results = retrieve_semantic_only(
             query_for_retrieval,
             top_k=top_k,
             top_n=top_n,
@@ -1078,7 +1161,9 @@ def ask(req: AskRequest):
         top_k = req.top_k or RETRIEVAL_TOP_K
         top_n = req.top_n or RERANK_TOP_N
 
-        results = state.retriever.retrieve(req.query, top_k=top_k, top_n=top_n)
+        # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
+        # results = state.retriever.retrieve(req.query, top_k=top_k, top_n=top_n)
+        results = retrieve_semantic_only(req.query, top_k=top_k, top_n=top_n)
 
         if not results:
             raise HTTPException(status_code=404,
@@ -1116,14 +1201,14 @@ def ask(req: AskRequest):
 
 
 @app.post("/retrieve", response_model=RetrieveOnlyResponse, tags=["Retrieval"],
-          summary="Ambil hasil retrieval (semantic search + rerank) tanpa LLM generation")
+          summary="Ambil hasil retrieval semantic search tanpa LLM generation")
 def retrieve_only(req: RetrieveOnlyRequest):
     """
-    **Retrieval-Only: Semantic Search + Cross-Encoder Reranking (tanpa LLM)**
+    **Retrieval-Only: Semantic Search (tanpa LLM)**
 
-    Endpoint ini menjalankan pipeline retrieval dua tahap:
+    Endpoint ini menjalankan semantic search:
     1. **Semantic Search** — embed query → cari top-K vektor terdekat di Qdrant
-    2. **Cross-Encoder Reranking** — re-score kandidat → return top-N terbaik
+    2. **Finalisasi** — return top-N terbaik berdasarkan skor embedding
 
     **Tidak ada** LLM yang dipanggil. Cocok untuk:
     - Inspeksi konteks sebelum dikirim ke LLM eksternal (e.g. Gemini, GPT)
@@ -1151,9 +1236,16 @@ def retrieve_only(req: RetrieveOnlyRequest):
 
         # ── Step 3: Jalankan retrieval ──────────────────────────────────────
         # [Bug 3 Fix] filter_programs_only sekarang menggunakan native Qdrant
-        # allowed_sources, bukan post-filter Python setelah reranking.
+        # allowed_sources, bukan post-filter Python setelah retrieval.
         allowed = list(PROGRAM_LABELS.keys()) if req.filter_programs_only else None
-        results = state.retriever.retrieve(
+        # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
+        # results = state.retriever.retrieve(
+        #     effective_query,
+        #     top_k=top_k,
+        #     top_n=top_n,
+        #     allowed_sources=allowed,   # [Bug 3 Fix]
+        # )
+        results = retrieve_semantic_only(
             effective_query,
             top_k=top_k,
             top_n=top_n,
@@ -1251,7 +1343,14 @@ def recommend_from_mkn1(req: MKN1Request):
 
         # [Bug 3 Fix] Filter native Qdrant via allowed_sources — hapus
         # post-filter list comprehension yang membuang kuota top_n.
-        results = state.retriever.retrieve(
+        # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
+        # results = state.retriever.retrieve(
+        #     query_for_retrieval,
+        #     top_k=top_k,
+        #     top_n=top_n,
+        #     allowed_sources=list(PROGRAM_LABELS.keys()),   # [Bug 3 Fix]
+        # )
+        results = retrieve_semantic_only(
             query_for_retrieval,
             top_k=top_k,
             top_n=top_n,

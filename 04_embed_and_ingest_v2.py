@@ -3,10 +3,9 @@
 # Social Welfare Policy Recommender System (Tim 3)
 #
 # Input : file JSONL di chunked_data/
-# Output: qdrant_db/ (persistent Qdrant vector database)
+# Output: Qdrant vector database (remote via HTTP)
 #
 # Perubahan dari v1:
-#   - torch.bfloat16 untuk Gemma2 di CUDA
 #   - UUID5 deterministik berbasis kolom Isi (text)
 #
 # Perubahan v2 → v3 (metadata baru dari clean_jsonl v2):
@@ -14,6 +13,11 @@
 #     tipe_konten (keyword array) agar filter Qdrant cepat
 #   - augment_chunk_text() diperkaya dengan nama_bansos dari metadata
 #     supaya embedding punya sinyal program bansos yang lebih kuat
+#
+# Backend embedding: fastembed (ONNX, CPU) via QdrantClient
+#   - Tidak perlu torch / CUDA / langchain_huggingface
+#   - Model di-cache di Temp/fastembed_cache (ONNX format)
+#   - Named vector: key = nama model (dari get_fastembed_vector_params)
 # ============================================================
 
 import os
@@ -24,19 +28,16 @@ import time
 import sys
 import logging
 from pathlib import Path
-from torch.cuda import is_available
 from tqdm.auto import tqdm
 
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
+from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
-    Distance,
-    VectorParams,
     PointStruct,
     PayloadSchemaType,
 )
-from langchain_huggingface import HuggingFaceEmbeddings
 
 from config import (
     CHUNKED_DIR, QDRANT_URL, QDRANT_COLLECTION,
@@ -216,87 +217,48 @@ def augment_chunk_text(text: str, metadata: dict | None = None) -> str:
 # INISIALISASI MODEL & DATABASE
 # ============================================================
 
-def init_embedding_model():
+def init_embedding_model() -> TextEmbedding:
     """
-    Load model embedding.
-    Mendukung Ollama lokal ATAU HuggingFaceEmbeddings.
+    Load model fastembed (ONNX, CPU).
+    Model di-cache di Temp/fastembed_cache — tidak perlu torch/CUDA.
     """
-    if (
-        ":" in EMBED_MODEL_NAME
-        or EMBED_MODEL_NAME == "embeddinggemma"
-        or "ollama" in EMBED_MODEL_NAME.lower()
-    ):
-        from langchain_ollama import OllamaEmbeddings
-        from config import OLLAMA_BASE_URL
-
-        logger.info("📦 Memuat model embedding Ollama: %s ...", EMBED_MODEL_NAME)
-        embeddings = OllamaEmbeddings(
-            base_url=OLLAMA_BASE_URL,
-            model=EMBED_MODEL_NAME,
-        )
-        logger.info("✅ Model embedding Ollama siap.")
-        return embeddings
-    else:
-        import torch
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif torch.backends.mps.is_available():
-            device = "mps"
-        else:
-            device = "cpu"
-
-        if device == "cpu":
-            logger.warning(
-                "⚠️ CUDA/MPS tidak tersedia — menggunakan CPU. "
-                "Proses embedding akan lebih lambat."
-            )
-            model_kwargs = {"device": device}
-        else:
-            logger.info("🖥️ Menggunakan GPU (%s) untuk embedding.", device)
-            model_kwargs = {
-                "device": device,
-                "model_kwargs": {"torch_dtype": torch.bfloat16},
-            }
-
-        logger.info("📦 Memuat model embedding HuggingFace: %s ...", EMBED_MODEL_NAME)
-        embeddings = HuggingFaceEmbeddings(
-            model_name=EMBED_MODEL_NAME,
-            model_kwargs=model_kwargs,
-            encode_kwargs={
-                "batch_size": EMBED_BATCH_SIZE,
-                "normalize_embeddings": True,
-            },
-        )
-        logger.info("✅ Model embedding HuggingFace siap (device=%s).", device)
-        return embeddings
+    logger.info("📦 Memuat model fastembed: %s ...", EMBED_MODEL_NAME)
+    model = TextEmbedding(
+        model_name=EMBED_MODEL_NAME,
+        threads=None,        # pakai semua CPU core
+    )
+    logger.info("✅ Model fastembed siap (ONNX, CPU).")
+    return model
 
 
 def init_qdrant() -> QdrantClient:
     """
-    Inisialisasi Qdrant client via HTTP ke server Docker (localhost:6333).
-    Buat collection jika belum ada.
+    Inisialisasi Qdrant client via HTTP.
+    Pakai fastembed (named vector) — kompatibel dengan ingestion.py.
+    Collection dibuat dengan get_fastembed_vector_params() agar
+    vector name otomatis sesuai model name.
     """
     logger.info("📦 Menghubungkan ke Qdrant server (%s) ...", QDRANT_URL)
     client = QdrantClient(url=QDRANT_URL)
 
-    existing = [c.name for c in client.get_collections().collections]
-    if QDRANT_COLLECTION in existing:
+    # Set fastembed model agar client tahu vector name & dimensi
+    client.set_model(EMBED_MODEL_NAME)
+
+    if client.collection_exists(QDRANT_COLLECTION):
         count = client.get_collection(QDRANT_COLLECTION).points_count
         logger.info(
             "✅ Collection '%s' sudah ada (%d points).",
             QDRANT_COLLECTION, count,
         )
     else:
+        # Buat collection dengan named vector (fastembed format)
         client.create_collection(
             collection_name=QDRANT_COLLECTION,
-            vectors_config=VectorParams(
-                size=EMBED_DIMENSIONS,
-                distance=Distance.COSINE,
-            ),
+            vectors_config=client.get_fastembed_vector_params(),
         )
         logger.info(
-            "✅ Collection '%s' dibuat (%d dimensi, Cosine).",
-            QDRANT_COLLECTION, EMBED_DIMENSIONS,
+            "✅ Collection '%s' dibuat (fastembed named vector).",
+            QDRANT_COLLECTION,
         )
 
     # ── Payload Index ──────────────────────────────────────
@@ -347,16 +309,18 @@ def _ensure_payload_indexes(client: QdrantClient) -> None:
 def ingest_chunks(
     chunks: list[dict],
     client: QdrantClient,
-    embeddings,
+    embeddings: TextEmbedding,
     source_name: str = "csv_data",
 ) -> int:
     """
     Proses daftar chunk dicts:
-      1. Embed teks (augmented) dalam batch
-      2. Upload ke Qdrant dalam batch UPLOAD_BATCH_SIZE
-      3. ID deterministik berbasis UUID5 dari teks asli
-      4. Payload menyimpan teks asli + semua metadata (termasuk baru)
+      1. Augment teks untuk embedding (sinyal semantik lebih kuat)
+      2. Embed teks augmented via fastembed (ONNX, CPU)
+      3. Upload ke Qdrant dalam batch UPLOAD_BATCH_SIZE
+      4. ID deterministik berbasis UUID5 dari teks asli
+      5. Payload menyimpan teks ASLI + semua metadata
 
+    Catatan: augmented text hanya untuk embedding, tidak disimpan.
     Returns: jumlah points yang berhasil di-upload.
     """
     if not chunks:
@@ -368,8 +332,7 @@ def ingest_chunks(
     # Teks asli → disimpan ke payload Qdrant
     texts_original = [c["text"] for c in chunks]
 
-    # Teks augmented → hanya untuk embedding (lebih kaya sinyal)
-    # Sekarang augment_chunk_text juga terima metadata untuk inject nama_bansos
+    # Teks augmented → hanya untuk embedding (lebih kaya sinyal semantik)
     texts_for_embed = [
         augment_chunk_text(c["text"], metadata=c.get("metadata"))
         for c in chunks
@@ -377,23 +340,26 @@ def ingest_chunks(
 
     metadatas = [c["metadata"] for c in chunks]
 
-    # ── Embedding ──────────────────────────────────────────
+    # ── Embedding via fastembed (ONNX) ─────────────────────
     logger.info(
-        "   🔢 Embedding %d teks (batch_size=%d) ...",
-        len(texts_for_embed), EMBED_BATCH_SIZE,
+        "   🔢 Embedding %d teks dengan fastembed ...",
+        len(texts_for_embed),
     )
     embed_start = time.time()
 
-    if EMBED_BATCH_SIZE <= 1:
-        vectors = []
-        for text in tqdm(texts_for_embed, desc="Embedding", unit="chunk"):
-            vec = embeddings.embed_documents([text])
-            vectors.append(vec[0])
-    else:
-        vectors = embeddings.embed_documents(texts_for_embed)
+    # fastembed .embed() mengembalikan generator numpy array
+    # tqdm wrap untuk progress bar
+    raw_vecs = embeddings.embed(
+        texts_for_embed,
+        batch_size=EMBED_BATCH_SIZE if EMBED_BATCH_SIZE > 1 else 32,
+    )
+    vectors = [vec.tolist() for vec in tqdm(raw_vecs, total=len(texts_for_embed), desc="Embedding", unit="chunk")]
 
     embed_time = time.time() - embed_start
     logger.info("   ✅ Embedding selesai dalam %.1f detik.", embed_time)
+
+    # Ambil nama vector dari fastembed params (e.g. "intfloat/multilingual-e5-large")
+    vector_name = list(client.get_fastembed_vector_params().keys())[0]
 
     # ── Upload ke Qdrant dalam batch ──────────────────────
     total_uploaded = 0
@@ -409,7 +375,8 @@ def ingest_chunks(
             points.append(
                 PointStruct(
                     id=point_id,
-                    vector=vectors[i],
+                    # named vector — wajib untuk collection fastembed
+                    vector={vector_name: vectors[i]},
                     payload={
                         "text": texts_original[i],  # teks asli, bukan augmented
                         **metadatas[i],              # semua metadata termasuk
@@ -616,11 +583,22 @@ def main():
 
     # Verifikasi collection
     try:
-        info = client.get_collection(QDRANT_COLLECTION)
+        info  = client.get_collection(QDRANT_COLLECTION)
+        vconf = info.config.params.vectors
+        # fastembed pakai named vector (dict), bukan unnamed VectorParams
+        if isinstance(vconf, dict):
+            vec_name  = list(vconf.keys())[0]
+            vec_size  = list(vconf.values())[0].size
+            vec_dist  = list(vconf.values())[0].distance
+        else:
+            vec_name  = "(default)"
+            vec_size  = vconf.size
+            vec_dist  = vconf.distance
         print(f"\n📊 Verifikasi Collection '{QDRANT_COLLECTION}':")
         print(f"   Points count  : {info.points_count:,}")
-        print(f"   Vectors size  : {info.config.params.vectors.size}")
-        print(f"   Distance      : {info.config.params.vectors.distance}")
+        print(f"   Vector name   : {vec_name}")
+        print(f"   Vectors size  : {vec_size}")
+        print(f"   Distance      : {vec_dist}")
         print(f"   Status        : {info.status}")
         print(f"\n   Payload index  :")
         print(f"     - nama_bansos  (keyword) → filter program bansos")
