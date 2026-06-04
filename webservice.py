@@ -55,8 +55,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 
 from langchain_ollama import OllamaLLM
-# from retrieval import PolicyRetriever  # RERANKER OFF: PolicyRetriever memuat CrossEncoder saat startup.
-from retrieval import RetrievalResult
+from retrieval import PolicyRetriever, RetrievalResult
 from generation import (
     PROGRAM_LABELS,
     build_context_grouped,
@@ -182,21 +181,6 @@ class AppState:
 state = AppState()
 
 
-class SemanticOnlyRetriever:
-    """Retriever ringan untuk Qdrant semantic search tanpa CrossEncoder reranker."""
-
-    def __init__(self):
-        from qdrant_client import QdrantClient
-
-        logger.info("📦 Inisialisasi SemanticOnlyRetriever...")
-        self.client = QdrantClient(url=QDRANT_URL)
-        self.client.set_model(EMBED_MODEL_NAME)
-        self.vector_name = list(self.client.get_fastembed_vector_params().keys())[0]
-        self.collection = QDRANT_COLLECTION
-        logger.info("✅ Qdrant terhubung — collection: %s, vector: %s",
-                    self.collection, self.vector_name)
-
-
 # ============================================================
 # LIFESPAN — load model sekali saat startup
 # ============================================================
@@ -206,9 +190,7 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 SIRA RAG Service starting up...")
     t0 = time.time()
     try:
-        # RERANKER OFF: PolicyRetriever memuat CrossEncoder reranker saat startup.
-        # state.retriever = PolicyRetriever()
-        state.retriever = SemanticOnlyRetriever()
+        state.retriever = PolicyRetriever()
         state.llm = OllamaLLM(
             base_url=OLLAMA_BASE_URL,
             model=OLLAMA_GENERATION_MODEL,
@@ -755,55 +737,20 @@ def retrieve_semantic_only(
     allowed_sources: Optional[list[str]] = None,
 ) -> list[RetrievalResult]:
     """
-    Jalankan Qdrant semantic search tanpa cross-encoder reranker.
-
-    Catatan:
-    - Field `score` tetap diisi agar response lama tetap kompatibel.
-    - Dalam mode ini, `score == embed_score`.
+    Wrapper untuk menjalankan semantic search melalui PolicyRetriever.
     """
-    if not query or not query.strip():
-        logger.warning("⚠️ Query kosong, skip retrieval.")
-        return []
-
-    from qdrant_client import models as qmodels
-    from qdrant_client.models import Filter, FieldCondition, MatchAny
-
-    qdrant_filter = None
-    if allowed_sources:
-        qdrant_filter = Filter(
-            must=[
-                FieldCondition(
-                    key="sumber",
-                    match=MatchAny(any=allowed_sources),
-                )
-            ]
-        )
-
     limit = max(top_k, top_n)
-    logger.debug("🔎 Semantic-only search limit=%d ...", limit)
-    hits = state.retriever.client.query_points(
-        collection_name=state.retriever.collection,
-        query=qmodels.Document(text=query, model=EMBED_MODEL_NAME),
-        using=state.retriever.vector_name,
-        limit=limit,
-        query_filter=qdrant_filter,
-    ).points
-
-    if not hits:
-        logger.warning("⚠️ Tidak ada hasil dari Qdrant.")
-        return []
-
-    results = [
-        RetrievalResult(
-            text=h.payload.get("text", ""),
-            metadata={k: v for k, v in h.payload.items() if k != "text"},
-            score=float(h.score),
-            embed_score=float(h.score),
-        )
-        for h in hits
-    ]
-    results.sort(key=lambda r: r.embed_score, reverse=True)
+    
+    # Memanggil retrieve dari PolicyRetriever yang sudah kita perbaiki
+    results = state.retriever.retrieve(
+        query=query,
+        top_k=limit,
+        allowed_sources=allowed_sources
+    )
+    
+    # Kembalikan dipotong sesuai top_n
     return results[:top_n]
+
 
 
 def parse_llm_json(raw: str) -> dict:
@@ -1277,7 +1224,7 @@ def retrieve_only(req: RetrieveOnlyRequest):
                 sumber=r.metadata.get("sumber", "unknown"),
                 judul_halaman=r.metadata.get("judul_halaman"),
                 page_number=str(r.metadata.get("page_number", "")),
-                # rerank_score=round(r.score, 4),
+                rerank_score=round(r.score, 4),
                 embed_score=round(r.embed_score, 4),
                 text=r.text,
                 metadata=r.metadata,

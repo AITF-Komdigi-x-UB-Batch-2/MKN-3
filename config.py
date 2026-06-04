@@ -90,7 +90,7 @@ RERANKER_MODEL_NAME = os.getenv(
 # --- Model untuk PRODUCTION (RTX 5090 VM) ---
 # RERANKER_MODEL_NAME = "BAAI/bge-reranker-v2-gemma"
 
-RETRIEVAL_TOP_K = 7
+RETRIEVAL_TOP_K = 5
 RERANK_TOP_N = 4
 
 # ============================================================
