@@ -4,7 +4,6 @@
 #
 # Endpoints:
 #   POST /recommend              → Profil warga → ranking program bantuan (JSON terstruktur)
-#   POST /recommend-from-mkn1   → Output JSON Tim 1 → ranking program bantuan
 #   POST /ask                   → Tanya juknis bebas (JSON terstruktur)
 #   POST /retrieve              → Retrieval-only tanpa LLM generation
 #   GET  /health                → Status Qdrant + model
@@ -18,7 +17,7 @@
 #
 # Changelog v3:
 #   [Bug 1] Hapus pemotongan [:300] di query_for_retrieval pada endpoint
-#           /recommend dan /recommend-from-mkn1; gunakan
+#           /recommend; gunakan
 #           _parse_content_to_retrieval_query() untuk seluruh string profil.
 #   [Bug 2] _parse_content_to_retrieval_query: tambahkan safe JSON parsing
 #           di awal fungsi sebelum fallback ke Regex.
@@ -34,6 +33,8 @@ import re
 import json
 import time
 import logging
+import asyncio
+import uuid
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -44,12 +45,14 @@ from config import (
     QDRANT_URL, QDRANT_COLLECTION,
     EMBED_MODEL_NAME,
     OLLAMA_BASE_URL, OLLAMA_GENERATION_MODEL, OLLAMA_TEMPERATURE,
-    PROMPT_TEMPLATE, POLICY_PROMPT_TEMPLATE,
+    PROMPT_TEMPLATE,
     RETRIEVAL_TOP_K, RERANK_TOP_N,
+    TIM1_CLASSIFICATION_API_URL, TIM1_GENERATION_API_URL, TIM1_API_TIMEOUT_S,
     configure_utf8_stdio,
 )
 configure_utf8_stdio()
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
@@ -159,8 +162,7 @@ Anda WAJIB merespons HANYA dengan JSON valid berikut, tanpa teks apapun di luar 
 
 RETRIEVE_SYSTEM_PROMPT = (
     "Temukan syarat kelayakan, kriteria sasaran penerima, besaran nominal bantuan, "
-    "dan mekanisme pencairan untuk program PKH Plus (lanjut usia 70 tahun ke atas) "
-    "dan ASPD (penyandang disabilitas) berdasarkan petunjuk teknis resmi."
+    "dan mekanisme pencairan berdasarkan petunjuk teknis resmi."
 )
 # Anda bisa mengganti isi RETRIEVE_SYSTEM_PROMPT di atas sesuai kebutuhan.
 # Contoh alternatif:
@@ -209,12 +211,14 @@ async def lifespan(app: FastAPI):
         # RERANKER OFF: PolicyRetriever memuat CrossEncoder reranker saat startup.
         # state.retriever = PolicyRetriever()
         state.retriever = SemanticOnlyRetriever()
-        state.llm = OllamaLLM(
-            base_url=OLLAMA_BASE_URL,
-            model=OLLAMA_GENERATION_MODEL,
-            temperature=OLLAMA_TEMPERATURE,
-            num_ctx=8192,
-        )
+        # OLLAMA OFF untuk /recommend: generation sekarang via API Tim 1/RunPod.
+        # state.llm = OllamaLLM(
+        #     base_url=OLLAMA_BASE_URL,
+        #     model=OLLAMA_GENERATION_MODEL,
+        #     temperature=OLLAMA_TEMPERATURE,
+        #     num_ctx=8192,
+        # )
+        state.llm = None
         state.ready = True
         state.startup_time = round(time.time() - t0, 2)
         logger.info("✅ Semua model siap dalam %.2fs.", state.startup_time)
@@ -237,7 +241,7 @@ app = FastAPI(
     description=(
         "**SIRA — Sistem Rekomender Intervensi & Kebijakan Program Sosial**\n\n"
         "REST API untuk sistem rekomendasi program bantuan sosial berbasis RAG.\n\n"
-        "Pipeline: `Qdrant Semantic Search` → `Ollama LLM Generation`\n\n"
+        "Pipeline: `Qdrant Semantic Search` → `Tim 1/RunPod Classification` → `Tim 1/RunPod Generation`\n\n"
         "Tim 3 Universitas Brawijaya × DISKOMINFO Jawa Timur (AITF 2026)"
     ),
     version="3.0.0",
@@ -257,11 +261,20 @@ app.add_middleware(
 # ============================================================
 
 class RecommendRequest(BaseModel):
-    profil_warga: str = Field(
-        ...,
+    profil_warga: Optional[str] = Field(
+        default=None,
         min_length=10,
         description="Deskripsi profil warga (teks bebas atau JSON string)",
         examples=["Warga lanjut usia 72 tahun, tinggal sendiri, tidak punya penghasilan tetap, rumah tidak layak huni, belum terdaftar DTKS"]
+    )
+    content: Optional[str] = Field(
+        default=None,
+        min_length=10,
+        description="Alias untuk profil_warga. Cocok untuk payload query dari Tim 4."
+    )
+    messages: Optional[list[dict]] = Field(
+        default=None,
+        description="Format chat JSONL dari Tim 4. Jika profil_warga/content kosong, message role user dipakai sebagai profil."
     )
     scoring_result: Optional[str] = Field(
         default="",
@@ -269,6 +282,33 @@ class RecommendRequest(BaseModel):
     )
     top_k: Optional[int] = Field(default=None, ge=5, le=100, description=f"Kandidat awal semantic search (default: {RETRIEVAL_TOP_K})")
     top_n: Optional[int] = Field(default=None, ge=1, le=20, description=f"Finalis semantic search (default: {RERANK_TOP_N})")
+
+    @model_validator(mode="after")
+    def normalize_profile_from_tim4_payload(self):
+        if self.profil_warga and self.profil_warga.strip():
+            self.profil_warga = self.profil_warga.strip()
+            return self
+
+        if self.content and self.content.strip():
+            self.profil_warga = self.content.strip()
+            return self
+
+        user_content = ""
+        for msg in self.messages or []:
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("role") == "user":
+                user_content = str(msg.get("content") or "").strip()
+                if user_content:
+                    break
+
+        if user_content:
+            self.profil_warga = user_content
+            return self
+
+        raise ValueError(
+            "Isi salah satu: `profil_warga`, `content`, atau `messages` dengan message role `user`."
+        )
 
 
 class AskRequest(BaseModel):
@@ -491,6 +531,7 @@ class RetrieveOnlyResponse(BaseModel):
 
 
 class RecommendResponse(BaseModel):
+    request_id: Optional[str] = None
     ringkasan_profil: str
     rekomendasi: list[RekomendasiProgram]
     program_tidak_sesuai: list[ProgramTidakSesuai]
@@ -500,6 +541,8 @@ class RecommendResponse(BaseModel):
     program_count: int
     elapsed_ms: int
     model_used: str
+    tim1_status: Optional[str] = None
+    tim1_error: Optional[str] = None
 
 
 class AskResponse(BaseModel):
@@ -719,8 +762,8 @@ def _parse_content_to_retrieval_query(content: str) -> str:
     return f"syarat kriteria sasaran penerima bantuan sosial: {base}"
 
 
-def check_ready():
-    if not state.ready or state.retriever is None or state.llm is None:
+def check_ready(require_llm: bool = False):
+    if not state.ready or state.retriever is None or (require_llm and state.llm is None):
         raise HTTPException(
             status_code=503,
             detail={
@@ -746,6 +789,59 @@ def to_source_docs(results: list[RetrievalResult]) -> list[SourceDocument]:
         )
         for r in results
     ]
+
+
+def infer_program_sources(content: str) -> Optional[list[str]]:
+    """
+    Batasi retrieval ke program yang jelas disebut oleh profil/query.
+    Ini mencegah query ASPD terseret ke PKH Plus saat semantic score berdekatan.
+    """
+    text = (content or "").lower()
+
+    def score_for(*names: str) -> Optional[float]:
+        for name in names:
+            match = re.search(
+                rf"skor\s+{re.escape(name)}\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)",
+                text,
+                re.IGNORECASE,
+            )
+            if match:
+                return float(match.group(1))
+        return None
+
+    skor_aspd = score_for("aspd")
+    skor_pkh = score_for("pkh plus", "pkh")
+    if skor_aspd is not None or skor_pkh is not None:
+        if (skor_aspd or 0.0) > 0.3 and (skor_pkh or 0.0) <= 0.3:
+            return ["Juklak ASPD Tahun 202620260225_12303533_01.pdf"]
+        if (skor_pkh or 0.0) > 0.3 and (skor_aspd or 0.0) <= 0.3:
+            return ["JUKNIS PKH PLUS 2026.pdf"]
+
+    aspd_signal = any(k in text for k in [
+        "aspd",
+        "disabilitas",
+        "penyandang disabilitas",
+        "difabel",
+        "banyak kesulitan",
+        "tidak mampu berjalan",
+        "tidak bisa berjalan",
+        "bed ridden",
+        "bedridden",
+    ])
+    pkh_signal = any(k in text for k in [
+        "pkh plus",
+        "lanjut usia",
+        "lansia",
+        "70 tahun",
+        "usia 70",
+        "umur 70",
+    ])
+
+    if aspd_signal and not pkh_signal:
+        return ["Juklak ASPD Tahun 202620260225_12303533_01.pdf"]
+    if pkh_signal and not aspd_signal:
+        return ["JUKNIS PKH PLUS 2026.pdf"]
+    return None
 
 
 def retrieve_semantic_only(
@@ -779,7 +875,9 @@ def retrieve_semantic_only(
             ]
         )
 
-    limit = max(top_k, top_n)
+    # Collection saat ini memiliki duplikat lama tanpa payload `text`.
+    # Ambil lebih banyak kandidat agar hasil final tetap cukup setelah skip/dedupe.
+    limit = min(max(top_k, top_n) * 3, 100)
     logger.debug("🔎 Semantic-only search limit=%d ...", limit)
     hits = state.retriever.client.query_points(
         collection_name=state.retriever.collection,
@@ -793,15 +891,32 @@ def retrieve_semantic_only(
         logger.warning("⚠️ Tidak ada hasil dari Qdrant.")
         return []
 
-    results = [
-        RetrievalResult(
-            text=h.payload.get("text", ""),
-            metadata={k: v for k, v in h.payload.items() if k != "text"},
-            score=float(h.score),
-            embed_score=float(h.score),
+    results: list[RetrievalResult] = []
+    seen: set[tuple] = set()
+    for h in hits:
+        payload = h.payload or {}
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            continue
+
+        key = (
+            payload.get("sumber"),
+            payload.get("page_number"),
+            payload.get("chunk_index"),
+            text[:120],
         )
-        for h in hits
-    ]
+        if key in seen:
+            continue
+        seen.add(key)
+
+        results.append(
+            RetrievalResult(
+                text=text,
+                metadata={k: v for k, v in payload.items() if k != "text"},
+                score=float(h.score),
+                embed_score=float(h.score),
+            )
+        )
     results.sort(key=lambda r: r.embed_score, reverse=True)
     return results[:top_n]
 
@@ -846,6 +961,163 @@ def raise_if_parse_error(parsed: dict):
                 "raw_output_preview": parsed.get("_raw", "")[:500],
             }
         )
+
+
+def extract_chat_content(api_response: dict) -> str:
+    """
+    Ambil content dari response chat-completions style:
+    {"choices": [{"message": {"content": "..."}}]}.
+    Fallback kecil disiapkan supaya mudah menyesuaikan respons RunPod.
+    """
+    try:
+        content = api_response["choices"][0]["message"]["content"]
+        if isinstance(content, str):
+            return content
+    except (KeyError, IndexError, TypeError):
+        pass
+
+    for key in ("content", "output", "text"):
+        value = api_response.get(key)
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            nested = extract_chat_content(value)
+            if nested:
+                return nested
+
+    raise ValueError("Response API model tidak memiliki choices[0].message.content.")
+
+
+async def call_chat_model_api(url: str, messages: list[dict], request_id: str) -> dict:
+    if not url or "YOUR_" in url:
+        raise ValueError(f"URL API model belum dikonfigurasi: {url}")
+
+    payload = {
+        "messages": messages,
+        "request_id": request_id,
+    }
+    timeout = httpx.Timeout(TIM1_API_TIMEOUT_S)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        return resp.json()
+
+
+def build_tim4_messages(req: RecommendRequest) -> list[dict]:
+    if req.messages:
+        return req.messages
+    return [{"role": "user", "content": req.profil_warga}]
+
+
+def normalize_tim1_payload(parsed: dict) -> dict:
+    """
+    Output Tim 1 pada sample menyimpan parameter/skor/kesimpulan di dalam
+    `laporan_evaluasi`; parser lokal membutuhkan field itu di root.
+    """
+    data = parsed.copy()
+    laporan = data.get("laporan_evaluasi")
+    if isinstance(laporan, dict):
+        for key in ("parameter", "skor", "kesimpulan"):
+            if key not in data and key in laporan:
+                data[key] = laporan[key]
+    return data
+
+
+def normalize_tim1_classification(parsed: dict) -> tuple[Optional[dict], str, str]:
+    if not parsed or parsed.get("_parse_error"):
+        return None, "", "parse_error"
+
+    normalized = normalize_tim1_payload(parsed)
+    try:
+        mkn1 = MKN1Request.model_validate(normalized)
+        profil_text, scoring_text = parse_mkn1_to_profil_warga(mkn1)
+        parts = []
+        if profil_text.strip():
+            parts.append(profil_text)
+        if scoring_text.strip():
+            parts.append(scoring_text)
+        return normalized, "\n\n".join(parts), "ok"
+    except Exception as e:
+        logger.warning("⚠️ Normalisasi Tim 1 gagal: %s", e)
+        return normalized, json.dumps(normalized, ensure_ascii=False), "partial"
+
+
+def build_augmented_generation_messages(
+    profil_warga: str,
+    context: str,
+    tim1_summary: str,
+    tim1_status: str,
+) -> list[dict]:
+    tim1_block = (
+        tim1_summary
+        if tim1_summary.strip()
+        else "Hasil klasifikasi Tim 1 tidak tersedia. Gunakan profil Tim 4 dan konteks dokumen."
+    )
+    user_prompt = (
+        "=== KONTEKS DOKUMEN KEBIJAKAN DARI RETRIEVAL QDRANT ===\n"
+        f"{context}\n"
+        "=== AKHIR KONTEKS DOKUMEN ===\n\n"
+        "=== PROFIL WARGA DARI TIM 4 (ACUAN UTAMA) ===\n"
+        f"{profil_warga}\n"
+        "=== AKHIR PROFIL WARGA ===\n\n"
+        f"=== HASIL KLASIFIKASI TIM 1 (STATUS: {tim1_status}) ===\n"
+        f"{tim1_block}\n"
+        "=== AKHIR HASIL KLASIFIKASI TIM 1 ===\n\n"
+        "Buat rekomendasi final program bantuan dalam JSON valid sesuai format pada system prompt. "
+        "Gunakan profil Tim 4 sebagai sumber fakta warga, hasil Tim 1 sebagai sinyal klasifikasi, "
+        "dan konteks dokumen sebagai dasar hukum/spesifikasi."
+    )
+    return [
+        {"role": "system", "content": JSON_RANKING_SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
+
+
+def build_recommend_response(
+    parsed: dict,
+    results: list[RetrievalResult],
+    elapsed_ms: int,
+    model_used: str,
+    request_id: Optional[str] = None,
+    tim1_status: Optional[str] = None,
+    tim1_error: Optional[str] = None,
+) -> RecommendResponse:
+    program_count = len(set(r.metadata.get("sumber", "") for r in results))
+
+    rekomendasi = [
+        RekomendasiProgram(
+            rank=item.get("rank", i + 1),
+            nama_program=item.get("nama_program", ""),
+            status=item.get("status", ""),
+            dasar_hukum=item.get("dasar_hukum"),
+            alasan_kelayakan=item.get("alasan_kelayakan"),
+            spesifikasi=SpesifikasiProgram(**item["spesifikasi"]) if item.get("spesifikasi") else None,
+        )
+        for i, item in enumerate(parsed.get("rekomendasi", []))
+    ]
+
+    tidak_sesuai = [
+        ProgramTidakSesuai(
+            nama_program=item.get("nama_program", ""),
+            status=item.get("status", "TIDAK_ELIGIBLE"),
+            alasan=item.get("alasan"),
+        )
+        for item in parsed.get("program_tidak_sesuai", [])
+    ]
+
+    return RecommendResponse(
+        request_id=request_id,
+        ringkasan_profil=parsed.get("ringkasan_profil", ""),
+        rekomendasi=rekomendasi,
+        program_tidak_sesuai=tidak_sesuai,
+        sources=to_source_docs(results),
+        retrieval_count=len(results),
+        program_count=program_count,
+        elapsed_ms=elapsed_ms,
+        model_used=model_used,
+        tim1_status=tim1_status,
+        tim1_error=tim1_error,
+    )
 
 
 # ============================================================
@@ -1001,7 +1273,8 @@ def health():
             "collection": QDRANT_COLLECTION,
             "embed_model": EMBED_MODEL_NAME,
             # "reranker": RERANKER_MODEL_NAME,  # Dinonaktifkan untuk uji coba semantic-only.
-            "llm_model": OLLAMA_GENERATION_MODEL,
+            "classification_api_url": TIM1_CLASSIFICATION_API_URL,
+            "generation_api_url": TIM1_GENERATION_API_URL,
             "default_top_k": RETRIEVAL_TOP_K,
             "default_top_n": RERANK_TOP_N,
         }
@@ -1020,14 +1293,13 @@ def list_programs():
 
 @app.post("/recommend", response_model=RecommendResponse, tags=["RAG"],
           summary="Rekomendasi program bantuan berdasarkan profil warga")
-def recommend(req: RecommendRequest):
+async def recommend(req: RecommendRequest):
     """
-    **Mode 1: Profil Warga → Ranking Program Bantuan (JSON Terstruktur)**
+    **Mode Tim 4 → Tim 3: Profil/Query → Retrieval + Klasifikasi Tim 1 → Generation**
 
-    Input profil warga → retrieve juknis relevan → LLM evaluasi eligibilitas → return JSON ranking.
-
-    Field `scoring_result` opsional: isi dengan output MKN1 (skor 0-100, desil 1-10)
-    untuk rekomendasi yang lebih presisi.
+    Endpoint menerima payload Tim 4 berupa `messages[]`, `content`, atau `profil_warga`.
+    Service menjalankan retrieval Qdrant dan call klasifikasi Tim 1 secara paralel,
+    lalu mengirim augmented prompt ke API generation Tim 1/RunPod.
 
     **Response mencakup:**
     - `rekomendasi[]` — ranking program ELIGIBLE/MUNGKIN_ELIGIBLE + spesifikasi lengkap
@@ -1036,98 +1308,94 @@ def recommend(req: RecommendRequest):
     """
     check_ready()
     t0 = time.time()
+    request_id = str(uuid.uuid4())
 
     try:
-        # [Bug 3 Fix] top_k dinaikkan ke minimal 40 agar semua 6 program
-        # terwakili dalam pool semantic search, terutama dokumen ASPD dan KIP JAWARA
-        # yang kadang kalah saing dengan PKH Plus di embedding score.
         top_k = max(req.top_k or RETRIEVAL_TOP_K, 40)
         top_n = req.top_n or RERANK_TOP_N
+        profil_warga = req.profil_warga
 
-        # [Bug 1 Fix] Gunakan _parse_content_to_retrieval_query() atas
-        # SELURUH string profil_warga tanpa [:300] slicing.
-        # BGE-M3 mendukung context window besar (8192 token), sehingga
-        # informasi disabilitas, usaha, dll. di bagian bawah profil tidak hilang.
-        query_for_retrieval = _parse_content_to_retrieval_query(req.profil_warga)
+        query_for_retrieval = _parse_content_to_retrieval_query(profil_warga)
+        allowed_sources = infer_program_sources(profil_warga) or list(PROGRAM_LABELS.keys())
 
-        logger.info("🔎 /recommend effective_query: %s", query_for_retrieval[:200])
+        logger.info("[%s] 🔎 /recommend effective_query: %s", request_id, query_for_retrieval[:200])
 
-        # [Bug 3 Fix] Filter 6 program utama dilakukan secara native di Qdrant
-        # via allowed_sources — bukan post-filter list comprehension.
-        # Dengan ini kuota top_k tidak terbuang oleh dokumen luar program.
-        # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
-        # results = state.retriever.retrieve(
-        #     query_for_retrieval,
-        #     top_k=top_k,
-        #     top_n=top_n,
-        #     allowed_sources=list(PROGRAM_LABELS.keys()),   # [Bug 3 Fix]
-        # )
-        results = retrieve_semantic_only(
+        retrieval_task = asyncio.to_thread(
+            retrieve_semantic_only,
             query_for_retrieval,
-            top_k=top_k,
-            top_n=top_n,
-            allowed_sources=list(PROGRAM_LABELS.keys()),   # [Bug 3 Fix]
+            top_k,
+            top_n,
+            allowed_sources,
         )
+        classification_task = call_chat_model_api(
+            TIM1_CLASSIFICATION_API_URL,
+            build_tim4_messages(req),
+            request_id,
+        )
+
+        results, classification_outcome = await asyncio.gather(
+            retrieval_task,
+            classification_task,
+            return_exceptions=True,
+        )
+
+        if isinstance(results, Exception):
+            logger.error("[%s] ❌ Retrieval gagal: %s", request_id, results, exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Retrieval error: {str(results)}")
 
         if not results:
             raise HTTPException(status_code=404,
                 detail="Tidak ada dokumen 6 program utama yang relevan ditemukan untuk profil yang diberikan.")
 
-        context = build_context_grouped(results)
+        tim1_status = "ok"
+        tim1_error = None
+        tim1_summary = req.scoring_result or ""
 
-        profil_section = f"=== PROFIL WARGA ===\n{req.profil_warga}"
-        if req.scoring_result:
-            profil_section += f"\n\n=== HASIL SCORING MKN1 ===\n{req.scoring_result}"
-
-        if req.scoring_result:
-            final_prompt = POLICY_PROMPT_TEMPLATE.format(
-                system_prompt=JSON_RANKING_SYSTEM_PROMPT,
-                scoring_result=profil_section,
-                context=context,
-            )
+        if isinstance(classification_outcome, Exception):
+            tim1_status = "failed"
+            tim1_error = str(classification_outcome)
+            logger.warning("[%s] ⚠️ Klasifikasi Tim 1 gagal, fallback tanpa klasifikasi: %s",
+                           request_id, tim1_error)
         else:
-            final_prompt = PROMPT_TEMPLATE.format(
-                system_prompt=JSON_RANKING_SYSTEM_PROMPT,
-                context=context,
-                query=profil_section,
-            )
+            try:
+                classification_content = extract_chat_content(classification_outcome)
+                classification_parsed = parse_llm_json(classification_content)
+                _, normalized_summary, normalized_status = normalize_tim1_classification(classification_parsed)
+                tim1_status = normalized_status
+                if normalized_summary:
+                    tim1_summary = normalized_summary
+            except Exception as e:
+                tim1_status = "failed"
+                tim1_error = str(e)
+                logger.warning("[%s] ⚠️ Normalisasi klasifikasi Tim 1 gagal, fallback: %s",
+                               request_id, tim1_error)
 
-        parsed = invoke_llm(final_prompt)
+        context = build_context_grouped(results)
+        generation_messages = build_augmented_generation_messages(
+            profil_warga=profil_warga,
+            context=context,
+            tim1_summary=tim1_summary,
+            tim1_status=tim1_status,
+        )
+
+        generation_response = await call_chat_model_api(
+            TIM1_GENERATION_API_URL,
+            generation_messages,
+            request_id,
+        )
+        generation_content = extract_chat_content(generation_response)
+        parsed = parse_llm_json(generation_content)
         raise_if_parse_error(parsed)
 
         elapsed_ms = int((time.time() - t0) * 1000)
-        program_count = len(set(r.metadata.get("sumber", "") for r in results))
-
-        rekomendasi = [
-            RekomendasiProgram(
-                rank=item.get("rank", i + 1),
-                nama_program=item.get("nama_program", ""),
-                status=item.get("status", ""),
-                dasar_hukum=item.get("dasar_hukum"),
-                alasan_kelayakan=item.get("alasan_kelayakan"),
-                spesifikasi=SpesifikasiProgram(**item["spesifikasi"]) if item.get("spesifikasi") else None,
-            )
-            for i, item in enumerate(parsed.get("rekomendasi", []))
-        ]
-
-        tidak_sesuai = [
-            ProgramTidakSesuai(
-                nama_program=item.get("nama_program", ""),
-                status=item.get("status", "TIDAK_ELIGIBLE"),
-                alasan=item.get("alasan"),
-            )
-            for item in parsed.get("program_tidak_sesuai", [])
-        ]
-
-        return RecommendResponse(
-            ringkasan_profil=parsed.get("ringkasan_profil", ""),
-            rekomendasi=rekomendasi,
-            program_tidak_sesuai=tidak_sesuai,
-            sources=to_source_docs(results),
-            retrieval_count=len(results),
-            program_count=program_count,
+        return build_recommend_response(
+            parsed=parsed,
+            results=results,
             elapsed_ms=elapsed_ms,
-            model_used=OLLAMA_GENERATION_MODEL,
+            model_used=TIM1_GENERATION_API_URL,
+            request_id=request_id,
+            tim1_status=tim1_status,
+            tim1_error=tim1_error,
         )
 
     except HTTPException:
@@ -1154,7 +1422,7 @@ def ask(req: AskRequest):
     - `poin_penting[]` — ringkasan dalam poin-poin
     - `sources[]` — metadata chunk untuk audit
     """
-    check_ready()
+    check_ready(require_llm=True)
     t0 = time.time()
 
     try:
@@ -1237,7 +1505,13 @@ def retrieve_only(req: RetrieveOnlyRequest):
         # ── Step 3: Jalankan retrieval ──────────────────────────────────────
         # [Bug 3 Fix] filter_programs_only sekarang menggunakan native Qdrant
         # allowed_sources, bukan post-filter Python setelah retrieval.
-        allowed = list(PROGRAM_LABELS.keys()) if req.filter_programs_only else None
+        inferred_sources = infer_program_sources(req.content)
+        allowed = (
+            inferred_sources
+            or (list(PROGRAM_LABELS.keys()) if req.filter_programs_only else None)
+        )
+        if inferred_sources:
+            logger.info("🎯 /retrieve inferred source filter: %s", inferred_sources)
         # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
         # results = state.retriever.retrieve(
         #     effective_query,
@@ -1296,134 +1570,6 @@ def retrieve_only(req: RetrieveOnlyRequest):
         raise
     except Exception as e:
         logger.error("❌ /retrieve error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
-
-
-@app.post("/recommend-from-mkn1", response_model=RecommendResponse, tags=["RAG"],
-          summary="Rekomendasi langsung dari output JSON Tim 1 (MKN1)")
-def recommend_from_mkn1(req: MKN1Request):
-    """
-    **Mode Integrasi Tim 1 → Tim 3: JSON MKN1 → Rekomendasi Program Bantuan**
-
-    Endpoint ini menerima **output JSON langsung dari model Tim 1 (MKN1)**
-    tanpa perlu konversi manual. Parser akan otomatis mengubahnya menjadi
-    teks profil dan skor untuk sistem RAG Tim 3 Universitas Brawijaya.
-
-    **Alur:**
-    `Output JSON MKN1` → `Parser MKN1` → `Profil Teks + Skor` → `RAG Pipeline` → `Ranking 6 Program`
-
-    **Contoh penggunaan:**
-    Tempelkan langsung JSON dari endpoint MKN1 ke dalam Body request ini.
-    """
-    check_ready()
-    t0 = time.time()
-
-    try:
-        # ── Parse output MKN1 ke format RAG ────────────────────
-        profil_warga, scoring_result = parse_mkn1_to_profil_warga(req)
-
-        if len(profil_warga.strip()) < 20:
-            raise HTTPException(
-                status_code=422,
-                detail="Data dari MKN1 tidak cukup untuk membuat profil warga. "
-                       "Pastikan field laporan_evaluasi dan parameter terisi."
-            )
-
-        logger.info("📥 MKN1 parsed:\n%s", profil_warga[:300])
-
-        # [Bug 3 Fix] top_k dinaikkan ke minimal 40 (sama dengan /recommend)
-        top_k = max(req.top_k or RETRIEVAL_TOP_K, 40)
-        top_n = req.top_n or RERANK_TOP_N
-
-        # [Bug 1 Fix] Gunakan _parse_content_to_retrieval_query() atas
-        # SELURUH profil_warga tanpa [:300] slicing.
-        query_for_retrieval = _parse_content_to_retrieval_query(profil_warga)
-
-        logger.info("🔎 /recommend-from-mkn1 effective_query: %s", query_for_retrieval[:200])
-
-        # [Bug 3 Fix] Filter native Qdrant via allowed_sources — hapus
-        # post-filter list comprehension yang membuang kuota top_n.
-        # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
-        # results = state.retriever.retrieve(
-        #     query_for_retrieval,
-        #     top_k=top_k,
-        #     top_n=top_n,
-        #     allowed_sources=list(PROGRAM_LABELS.keys()),   # [Bug 3 Fix]
-        # )
-        results = retrieve_semantic_only(
-            query_for_retrieval,
-            top_k=top_k,
-            top_n=top_n,
-            allowed_sources=list(PROGRAM_LABELS.keys()),   # [Bug 3 Fix]
-        )
-
-        if not results:
-            raise HTTPException(
-                status_code=404,
-                detail="Tidak ada dokumen 6 program utama yang relevan ditemukan."
-            )
-
-        context = build_context_grouped(results)
-
-        profil_section = f"=== PROFIL WARGA ===\n{profil_warga}"
-        if scoring_result:
-            profil_section += f"\n\n=== HASIL SCORING MKN1 ===\n{scoring_result}"
-
-        if scoring_result:
-            final_prompt = POLICY_PROMPT_TEMPLATE.format(
-                system_prompt=JSON_RANKING_SYSTEM_PROMPT,
-                scoring_result=profil_section,
-                context=context,
-            )
-        else:
-            final_prompt = PROMPT_TEMPLATE.format(
-                system_prompt=JSON_RANKING_SYSTEM_PROMPT,
-                context=context,
-                query=profil_section,
-            )
-
-        parsed = invoke_llm(final_prompt)
-        raise_if_parse_error(parsed)
-
-        elapsed_ms = int((time.time() - t0) * 1000)
-        program_count = len(set(r.metadata.get("sumber", "") for r in results))
-
-        rekomendasi = [
-            RekomendasiProgram(
-                rank=item.get("rank", i + 1),
-                nama_program=item.get("nama_program", ""),
-                status=item.get("status", ""),
-                dasar_hukum=item.get("dasar_hukum"),
-                alasan_kelayakan=item.get("alasan_kelayakan"),
-                spesifikasi=SpesifikasiProgram(**item["spesifikasi"]) if item.get("spesifikasi") else None,
-            )
-            for i, item in enumerate(parsed.get("rekomendasi", []))
-        ]
-
-        tidak_sesuai = [
-            ProgramTidakSesuai(
-                nama_program=item.get("nama_program", ""),
-                status=item.get("status", "TIDAK_ELIGIBLE"),
-                alasan=item.get("alasan"),
-            )
-            for item in parsed.get("program_tidak_sesuai", [])
-        ]
-
-        return RecommendResponse(
-            ringkasan_profil=parsed.get("ringkasan_profil", ""),
-            rekomendasi=rekomendasi,
-            program_tidak_sesuai=tidak_sesuai,
-            sources=to_source_docs(results),
-            retrieval_count=len(results),
-            program_count=program_count,
-            elapsed_ms=elapsed_ms,
-            model_used=OLLAMA_GENERATION_MODEL,
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("❌ /recommend-from-mkn1 error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 

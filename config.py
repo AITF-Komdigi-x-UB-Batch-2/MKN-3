@@ -106,6 +106,20 @@ HF_GENERATION_MODEL = os.getenv("HF_GENERATION_MODEL", "")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 
 # ============================================================
+# KONFIGURASI API MODEL TIM 1 / RUNPOD
+# ============================================================
+# Ganti nilai default ini dengan endpoint RunPod asli saat integrasi.
+TIM1_CLASSIFICATION_API_URL = os.getenv(
+    "TIM1_CLASSIFICATION_API_URL",
+    "https://api.runpod.ai/v2/YOUR_CLASSIFICATION_ENDPOINT/runsync",
+)
+TIM1_GENERATION_API_URL = os.getenv(
+    "TIM1_GENERATION_API_URL",
+    "https://api.runpod.ai/v2/YOUR_GENERATION_ENDPOINT/runsync",
+)
+TIM1_API_TIMEOUT_S = float(os.getenv("TIM1_API_TIMEOUT_S", "120"))
+
+# ============================================================
 # PROMPT TEMPLATES
 # ============================================================
 STRICT_RAG_OUTPUT_CONTRACT = """
