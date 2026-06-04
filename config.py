@@ -64,10 +64,10 @@ CHUNKED_DIR = str(BASE_DIR / "chunked_data")
 # ============================================================
 QDRANT_DIR = str(BASE_DIR / "qdrant_db")
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "kebijakan_sosial_tim4_bge-m3")
+QDRANT_COLLECTION = 'juknis-juklak-mkn3'
 
 # --- Model untuk LOCAL DEVELOPMENT ---
-EMBED_MODEL_NAME = os.getenv("EMBED_MODEL_NAME", "BAAI/bge-m3")
+EMBED_MODEL_NAME = 'intfloat/multilingual-e5-large' # model bawaan fastembed dari qdrant
 EMBED_DIMENSIONS = int(os.getenv("EMBED_DIMENSIONS", "1024"))
 
 # --- Model untuk PRODUCTION (RTX 5090 VM / SentenceTransformer) ---
