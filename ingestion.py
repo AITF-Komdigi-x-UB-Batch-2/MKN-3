@@ -1,3 +1,4 @@
+import time
 import json
 import config
 import warnings
@@ -28,7 +29,7 @@ if not client.collection_exists(COLLECTION_NAME):
     # read
     documents = []
     metadata = []
-    with open('juknis_extracted_normalized.jsonl', 'r', encoding='utf-8') as f:
+    with open('chunked_data/juknis_extracted_normalized.jsonl', 'r', encoding='utf-8') as f:
         for line in f:
             if not line.strip():
                 continue
@@ -36,18 +37,32 @@ if not client.collection_exists(COLLECTION_NAME):
             documents.append(data_row['text'])
             metadata.append(data_row['metadata'])
 
-    # upsert
+    # pake payload indexing di kategori biar optimise filtering
+    client.create_payload_index(
+        collection_name=COLLECTION_NAME,
+        field_name="nama_bansos",
+        field_schema=models.PayloadSchemaType.KEYWORD
+    )
+
+    # upsert (ingesting ke collection)
+    start = time.time()
+    VECTOR_NAME = list(client.get_fastembed_vector_params().keys())[0]
     client.upsert(
         collection_name=COLLECTION_NAME,
         points=[
             models.PointStruct(
                 id=i,
-                vector=models.Document(text=doc, model=MODEL_NAME),
+                vector={
+                    VECTOR_NAME: models.Document(
+                        text=doc, model=MODEL_NAME
+                    )
+                },
                 payload=meta
             )
             for i, (doc, meta) in enumerate(zip(documents, metadata))
         ]
     )
-    print("Ingestion completed successfully!")
+    end = time.time()
+    print(f"Ingestion completed successfully in {end - start:.2f} seconds!")
 else:
     print(f"Collection '{COLLECTION_NAME}' already exists. Skipping ingestion.")
