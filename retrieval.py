@@ -45,7 +45,7 @@ class RetrievalResult:
 
 class PolicyRetriever:
     """
-    Semantic search + reranking untuk dokumen kebijakan sosial.
+    Semantic search untuk dokumen kebijakan sosial.
     """
 
     def __init__(self):
