@@ -8,7 +8,6 @@
 # Pipeline:
 #   1. Embed query via fastembed (QdrantClient.set_model)
 #   2. Semantic search ke Qdrant (named vector, filter by sumber)
-#   3. Cross-encoder reranking (sentence-transformers)
 # ============================================================
 
 from __future__ import annotations
@@ -35,8 +34,7 @@ class RetrievalResult:
     """Satu hasil retrieval: teks chunk + metadata + skor."""
     text: str
     metadata: dict = field(default_factory=dict)
-    score: float = 0.0        # skor reranker (cross-encoder)
-    embed_score: float = 0.0  # skor embedding (cosine similarity)
+    embed_score: float = 0.0
 
 
 # ============================================================
@@ -58,29 +56,6 @@ class PolicyRetriever:
         self.collection  = config.QDRANT_COLLECTION
         logger.info("✅ Qdrant terhubung — collection: %s, vector: %s",
                     self.collection, self.vector_name)
-
-    def filter_program(self, query: str) -> str | None:
-        query_lower = query.lower()
-        
-        # Cari skor PKH Plus / PKH+
-        pkh_score = 0.0
-        pkh_match = re.search(r'(?:skor\s+)?pkh\s*\+?\s*(?:plus)?\s*:\s*([0-9.]+)', query_lower)
-        if pkh_match:
-            pkh_score = float(pkh_match.group(1))
-            
-        # Cari skor ASPD
-        aspd_score = 0.0
-        aspd_match = re.search(r'(?:skor\s+)?aspd\s*:\s*([0-9.]+)', query_lower)
-        if aspd_match:
-            aspd_score = float(aspd_match.group(1))
-            
-        if pkh_score == 0.0 and aspd_score == 0.0:
-            return None
-            
-        if pkh_score > aspd_score:
-            return "PKH Plus"
-        else:
-            return "ASPD"
 
     def retrieve(
         self,
@@ -113,15 +88,6 @@ class PolicyRetriever:
                     match=models.MatchAny(any=allowed_sources),
                 )
             )
-        else:
-            detected_program = self.filter_program(query)
-            if detected_program:
-                conditions.append(
-                    models.FieldCondition(
-                        key="nama_bansos",
-                        match=models.MatchValue(value=detected_program),
-                    )
-                )
         qdrant_filter = models.Filter(must=conditions) if conditions else None
 
 
