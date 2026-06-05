@@ -13,13 +13,7 @@ app = FastAPI(
 
 retriever = PolicyRetriever()
 
-SYSTEM_PROMPT_CONTENT = (
-    "Anda adalah AI Auditor resmi Dinas Sosial Provinsi Jawa Timur yang bertugas "
-    "melakukan verifikasi dan validasi kelayakan penerima manfaat dua program bantuan sosial: PKH Plus dan ASPD.\n"
-    "Berdasarkan informasi kriteria yang diberikan, Anda wajib menghasilkan satu objek JSON murni "
-    "(tanpa tag markdown) dengan struktur 'laporan_evaluasi' yang mencakup key "
-    "'profil_warga', 'kesimpulan', 'skor', 'analisis', dan 'parameter' secara konsisten."
-)
+SYSTEM_PROMPT_CONTENT = os.getenv('SYSTEM_PROMPT')
 MODEL_ENDPOINT = os.getenv('MODEL_ENDPOINT')
 headers = {
     "Authorization": os.getenv('RUNPOD_API_KEY'),
@@ -30,11 +24,11 @@ class QueryRequest(BaseModel):
     query: str
     top_k: int = config.RETRIEVAL_TOP_K
 
-@app.post("/query", response_model=dict)
+@app.post("/recommend", response_model=dict)
 async def process_query(request: QueryRequest):
     """
     Endpoint utama untuk query LLM dengan RAG.
-    Input: JSON {'query': '...', 'top_k': ...}
+    Input: JSON {'query': '...', 'top_k': 5}
     Output: JSON hasil LLM
     """
     try:
@@ -88,9 +82,14 @@ async def process_query(request: QueryRequest):
         return {"response": result_text}
 
     except requests.exceptions.HTTPError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=str(e)
+        ) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500, detail=str(e)
+        ) from e
 
 @app.post('/retrieval')
 async def retrieve_policy(request: QueryRequest):
