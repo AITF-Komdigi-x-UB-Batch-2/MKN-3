@@ -57,7 +57,6 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 
-from langchain_ollama import OllamaLLM
 from retrieval import PolicyRetriever, RetrievalResult
 from generation import (
     PROGRAM_LABELS,
