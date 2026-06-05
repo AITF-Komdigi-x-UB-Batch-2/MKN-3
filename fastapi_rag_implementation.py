@@ -97,7 +97,6 @@ async def retrieve_policy(request: QueryRequest):
     """pure retrieval tok"""
     try:
         retrieval = retriever.retrieve(query=request.query, top_k=request.top_k)
-        retrieval_text = "\n\n".join([doc.text for doc in retrieval])
         return {
             "results": [
                 {"text": doc.text, "score": doc.score, "metadata": doc.metadata} 
@@ -108,3 +107,12 @@ async def retrieve_policy(request: QueryRequest):
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        'fastapi_rag_implementation:app',
+        host='0.0.0.0',
+        port=8000,
+        reload=True
+    )
