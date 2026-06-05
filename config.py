@@ -111,13 +111,23 @@ HF_TOKEN = os.getenv("HF_TOKEN", "")
 # Ganti nilai default ini dengan endpoint RunPod asli saat integrasi.
 TIM1_CLASSIFICATION_API_URL = os.getenv(
     "TIM1_CLASSIFICATION_API_URL",
-    "https://api.runpod.ai/v2/YOUR_CLASSIFICATION_ENDPOINT/runsync",
+    os.getenv(
+        "MODEL_ENDPOINT",
+        "https://api.runpod.ai/v2/hhv4lelezfg0mv/openai/v1/chat/completions",
+    ),
 )
 TIM1_GENERATION_API_URL = os.getenv(
     "TIM1_GENERATION_API_URL",
-    "https://api.runpod.ai/v2/YOUR_GENERATION_ENDPOINT/runsync",
+    os.getenv(
+        "MODEL_ENDPOINT",
+        "https://api.runpod.ai/v2/hhv4lelezfg0mv/openai/v1/chat/completions",
+    ),
 )
 TIM1_API_TIMEOUT_S = float(os.getenv("TIM1_API_TIMEOUT_S", "120"))
+RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY", "").strip().strip('"').strip("'")
+RUNPOD_MODEL_NAME = os.getenv("MODEL_NAME", OLLAMA_GENERATION_MODEL).strip().strip('"').strip("'")
+RUNPOD_TEMPERATURE = float(os.getenv("TEMPERATURE", str(OLLAMA_TEMPERATURE)))
+RUNPOD_MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))
 
 # ============================================================
 # PROMPT TEMPLATES

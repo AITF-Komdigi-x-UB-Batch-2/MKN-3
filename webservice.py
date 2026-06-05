@@ -46,10 +46,13 @@ from config import (
     OLLAMA_BASE_URL, OLLAMA_GENERATION_MODEL, OLLAMA_TEMPERATURE,
     PROMPT_TEMPLATE, POLICY_PROMPT_TEMPLATE,
     RETRIEVAL_TOP_K, RERANK_TOP_N,
+    TIM1_CLASSIFICATION_API_URL, TIM1_GENERATION_API_URL, TIM1_API_TIMEOUT_S,
+    RUNPOD_API_KEY, RUNPOD_MODEL_NAME, RUNPOD_TEMPERATURE, RUNPOD_MAX_TOKENS,
     configure_utf8_stdio,
 )
 configure_utf8_stdio()
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
@@ -103,34 +106,17 @@ evaluasi kelayakan warga HANYA untuk 6 program utama berikut:
 7. DILARANG menyebut Program Sembako, PKH reguler, BPNT, PBI Jaminan Kesehatan, Rutilahu, PIP, Jamkesda, atau bantuan tambahan lain.
 
 === FORMAT OUTPUT ===
-Anda WAJIB merespons HANYA dengan JSON valid berikut, tanpa teks apapun di luar JSON:
+Anda WAJIB merespons HANYA dengan JSON valid tanpa markdown dan tanpa teks pembuka/penutup.
+Gunakan key berikut persis:
+- ringkasan_profil: string konkret berisi umur, desil, DTSEN/DTKS, disabilitas/usia lansia, dan kondisi kunci warga.
+- rekomendasi: array program yang ELIGIBLE atau MUNGKIN_ELIGIBLE. Setiap item wajib berisi rank, nama_program, status, dasar_hukum, alasan_kelayakan, spesifikasi.
+- spesifikasi: object berisi nominal_bantuan, frekuensi, sasaran, syarat_dokumen, mekanisme.
+- program_tidak_sesuai: array program TIDAK_ELIGIBLE. Setiap item wajib berisi nama_program, status, alasan.
 
-{
-  "ringkasan_profil": "rangkuman singkat kondisi kunci warga yang relevan",
-  "rekomendasi": [
-    {
-      "rank": 1,
-      "nama_program": "Nama Program",
-      "status": "ELIGIBLE",
-      "dasar_hukum": "Nama dokumen dan bagian yang relevan",
-      "alasan_kelayakan": "Penjelasan mengapa warga layak berdasarkan kriteria dokumen",
-      "spesifikasi": {
-        "nominal_bantuan": "Rp X.XXX.XXX / periode",
-        "frekuensi": "per bulan / per tahun / dst",
-        "sasaran": "kriteria penerima sesuai juknis",
-        "syarat_dokumen": ["KTP", "KK", "dst"],
-        "mekanisme": "cara pencairan/penyaluran"
-      }
-    }
-  ],
-  "program_tidak_sesuai": [
-    {
-      "nama_program": "Nama Program",
-      "status": "TIDAK_ELIGIBLE",
-      "alasan": "kondisi warga yang tidak memenuhi kriteria"
-    }
-  ]
-}
+Larangan keras:
+- Jangan menyalin placeholder seperti "Nama Program", "Rp X.XXX.XXX", "dst", "rangkuman singkat", atau "Penjelasan mengapa".
+- Jangan mengosongkan alasan. Semua alasan harus merujuk kondisi warga dan kriteria dokumen.
+- nama_program harus salah satu dari 6 program utama yang disebut di atas.
 """
 
 JSON_ASK_SYSTEM_PROMPT = """Anda adalah SIRA (Sistem Rekomender Intervensi & Kebijakan Program Sosial), \
@@ -239,11 +225,23 @@ app.add_middleware(
 # ============================================================
 
 class RecommendRequest(BaseModel):
-    profil_warga: str = Field(
-        ...,
+    profil_warga: Optional[str] = Field(
+        default=None,
         min_length=10,
         description="Deskripsi profil warga (teks bebas atau JSON string)",
         examples=["Warga lanjut usia 72 tahun, tinggal sendiri, tidak punya penghasilan tetap, rumah tidak layak huni, belum terdaftar DTKS"]
+    )
+    content: Optional[str] = Field(
+        default=None,
+        min_length=10,
+        description="Alias untuk profil_warga. Cocok untuk payload query dari Tim 4."
+    )
+    messages: Optional[list[dict]] = Field(
+        default=None,
+        description=(
+            "Format chat JSONL dari Tim 4. Jika profil_warga/content kosong, "
+            "message role user dipakai sebagai profil."
+        )
     )
     scoring_result: Optional[str] = Field(
         default="",
@@ -251,6 +249,31 @@ class RecommendRequest(BaseModel):
     )
     top_k: Optional[int] = Field(default=None, ge=5, le=100, description=f"Kandidat awal semantic search (default: {RETRIEVAL_TOP_K})")
     top_n: Optional[int] = Field(default=None, ge=1, le=20, description=f"Finalis semantic search (default: {RERANK_TOP_N})")
+
+    @model_validator(mode="after")
+    def normalize_profile_from_tim4_payload(self):
+        if self.profil_warga and self.profil_warga.strip():
+            self.profil_warga = self.profil_warga.strip()
+            return self
+
+        if self.content and self.content.strip():
+            self.profil_warga = self.content.strip()
+            return self
+
+        user_content = ""
+        for msg in self.messages or []:
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("role") == "user":
+                user_content = str(msg.get("content") or "").strip()
+
+        if user_content:
+            self.profil_warga = user_content
+            return self
+
+        raise ValueError(
+            "Isi salah satu: `profil_warga`, `content`, atau `messages` dengan message role `user`."
+        )
 
 
 class AskRequest(BaseModel):
@@ -712,6 +735,281 @@ def check_ready():
         )
 
 
+def normalize_spesifikasi(raw: object) -> Optional[SpesifikasiProgram]:
+    if not isinstance(raw, dict):
+        return None
+
+    data = raw.copy()
+    syarat = data.get("syarat_dokumen")
+
+    if isinstance(syarat, str):
+        data["syarat_dokumen"] = [
+            item.strip()
+            for item in re.split(r"[,;\n]+", syarat)
+            if item.strip()
+        ]
+    elif syarat is None:
+        data["syarat_dokumen"] = None
+    elif not isinstance(syarat, list):
+        data["syarat_dokumen"] = [str(syarat)]
+    else:
+        data["syarat_dokumen"] = [
+            str(item).strip()
+            for item in syarat
+            if str(item).strip()
+        ]
+
+    for key in ["nominal_bantuan", "frekuensi", "sasaran", "mekanisme"]:
+        value = data.get(key)
+        if value is not None and not isinstance(value, str):
+            data[key] = (
+                json.dumps(value, ensure_ascii=False)
+                if isinstance(value, (dict, list))
+                else str(value)
+            )
+
+    return SpesifikasiProgram(**data)
+
+
+def normalize_tim1_output(raw: str) -> dict:
+    if not raw or not raw.strip():
+        return {}
+
+    parsed = parse_llm_json(raw)
+    if parsed.get("_parse_error"):
+        return {}
+
+    data = parsed.copy()
+    laporan = data.get("laporan_evaluasi")
+    if isinstance(laporan, dict):
+        for key in ["parameter", "skor", "kesimpulan"]:
+            if key not in data and key in laporan:
+                data[key] = laporan[key]
+    return data
+
+
+def tim1_is_layak(item: object) -> bool:
+    if not isinstance(item, dict):
+        return False
+    status = str(item.get("status_kelayakan") or "").upper()
+    label = item.get("label")
+    return ("LAYAK" in status and "TIDAK" not in status) or label == 1
+
+
+def parse_profile_signals(profil_warga: str) -> dict:
+    text = profil_warga or ""
+    lower = text.lower()
+
+    def number(pattern: str, cast=float):
+        match = re.search(pattern, text, re.IGNORECASE)
+        if not match:
+            return None
+        try:
+            return cast(match.group(1))
+        except (TypeError, ValueError):
+            return None
+
+    age = number(r"umur\s*[:\-]?\s*(\d+)", int)
+    if age is None:
+        age = number(r"(\d+)\s*tahun", int)
+
+    desil = number(r"desil\s*(?:nasional)?\s*[:\-]?\s*(\d+)", int)
+    skor_pkh = number(r"skor\s+pkh\s*plus\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)", float)
+    if skor_pkh is None:
+        skor_pkh = number(r"pkh\+\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)", float)
+    skor_aspd = number(r"skor\s+aspd\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)", float)
+    if skor_aspd is None:
+        skor_aspd = number(r"aspd\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)", float)
+
+    status_dtsen = None
+    status_match = re.search(r"status\s+dtsen\s*[:\-]?\s*([^\n]+)", text, re.IGNORECASE)
+    if status_match:
+        status_dtsen = status_match.group(1).strip()
+
+    lokasi = None
+    lokasi_match = re.search(r"wilayah\s*[:\-]?\s*([^\n]+)", text, re.IGNORECASE)
+    if lokasi_match:
+        lokasi = lokasi_match.group(1).strip()
+
+    no_disability = all(kw in lower for kw in [
+        "berjalan/tangga  : tidak mengalami kesulitan".lower(),
+        "mengurus diri    : tidak mengalami kesulitan".lower(),
+    ])
+    has_disability = any(kw in lower for kw in [
+        "banyak kesulitan",
+        "tidak bisa",
+        "membutuhkan bantuan",
+        "disabilitas",
+        "bedridden",
+        "bed ridden",
+    ]) and not no_disability
+
+    return {
+        "umur": age,
+        "desil_nasional": desil,
+        "status_dtsen": status_dtsen,
+        "lokasi": lokasi,
+        "skor_pkh_plus": skor_pkh,
+        "skor_aspd": skor_aspd,
+        "has_disability": has_disability,
+    }
+
+
+def source_ref_for_program(results: list[RetrievalResult], source_filename: str) -> str:
+    pages = [
+        str(r.metadata.get("page_number", ""))
+        for r in results
+        if r.metadata.get("sumber") == source_filename and r.metadata.get("page_number") not in (None, "")
+    ]
+    unique_pages = []
+    for page in pages:
+        if page not in unique_pages:
+            unique_pages.append(page)
+    if unique_pages:
+        return f"{source_filename}, Hal. {', '.join(unique_pages[:3])}"
+    return source_filename
+
+
+def build_fallback_generation(
+    profil_warga: str,
+    scoring_result: str,
+    results: list[RetrievalResult],
+) -> dict:
+    tim1 = normalize_tim1_output(scoring_result)
+    laporan = tim1.get("laporan_evaluasi") if isinstance(tim1.get("laporan_evaluasi"), dict) else {}
+    profil = laporan.get("profil_warga") if isinstance(laporan.get("profil_warga"), dict) else {}
+    analisis = laporan.get("analisis") if isinstance(laporan.get("analisis"), dict) else {}
+    parameter = tim1.get("parameter") if isinstance(tim1.get("parameter"), dict) else {}
+    kesimpulan = tim1.get("kesimpulan") if isinstance(tim1.get("kesimpulan"), dict) else {}
+    skor = tim1.get("skor") if isinstance(tim1.get("skor"), dict) else {}
+    profile_signals = parse_profile_signals(profil_warga)
+
+    umur = profil.get("umur") or profile_signals.get("umur")
+    desil = parameter.get("desil_nasional") or profile_signals.get("desil_nasional")
+    status_dtsen = (
+        profil.get("status_dtsen")
+        or parameter.get("status_dtsekolah")
+        or profile_signals.get("status_dtsen")
+    )
+    wilayah = profil.get("wilayah")
+    if isinstance(wilayah, dict):
+        wilayah_text = ", ".join(str(v) for v in wilayah.values() if v)
+    else:
+        wilayah_text = str(wilayah or profile_signals.get("lokasi") or "")
+
+    ringkasan_parts = []
+    if umur is not None:
+        ringkasan_parts.append(f"umur {umur} tahun")
+    if desil is not None:
+        ringkasan_parts.append(f"desil nasional {desil}")
+    if status_dtsen:
+        ringkasan_parts.append(str(status_dtsen))
+    if wilayah_text:
+        ringkasan_parts.append(wilayah_text)
+    if analisis.get("disabilitas_fungsi"):
+        ringkasan_parts.append(str(analisis["disabilitas_fungsi"]))
+    ringkasan = (
+        "Profil warga: " + "; ".join(ringkasan_parts)
+        if ringkasan_parts
+        else profil_warga[:500]
+    )
+
+    program_configs = [
+        (
+            "pkh_plus",
+            "PKH Plus (Lanjut Usia 70+)",
+            "JUKNIS PKH PLUS 2026.pdf",
+            analisis.get("sintesis_pkh_plus"),
+            skor.get("skor_pkh_plus", profile_signals.get("skor_pkh_plus")),
+            {
+                "nominal_bantuan": "Mengacu JUKNIS PKH Plus 2026",
+                "frekuensi": "sesuai tahapan penyaluran dalam juknis",
+                "sasaran": "lansia 70 tahun ke atas yang memenuhi kriteria DTSEN/desil dan administrasi kependudukan Jawa Timur",
+                "syarat_dokumen": ["KTP", "KK", "NIK"],
+                "mekanisme": "verifikasi/pemutakhiran data dan penyaluran sesuai petunjuk teknis PKH Plus",
+            },
+        ),
+        (
+            "aspd",
+            "Asistensi Sosial Penyandang Disabilitas (ASPD)",
+            "Juklak ASPD Tahun 202620260225_12303533_01.pdf",
+            analisis.get("sintesis_aspd"),
+            skor.get("skor_aspd", profile_signals.get("skor_aspd")),
+            {
+                "nominal_bantuan": "Mengacu Juklak ASPD Tahun 2026",
+                "frekuensi": "sesuai tahapan penyaluran dalam juklak",
+                "sasaran": "penyandang disabilitas yang memenuhi kriteria usia, domisili, desil/prioritas, dan verifikasi lapangan",
+                "syarat_dokumen": ["KTP", "KK", "NIK", "dokumen pendukung disabilitas/verifikasi"],
+                "mekanisme": "verifikasi data penerima, penetapan, dan penyaluran melalui mekanisme juklak ASPD",
+            },
+        ),
+    ]
+
+    rekomendasi = []
+    tidak_sesuai = []
+    rank = 1
+    for key, program_name, source, sintesis, score, spec in program_configs:
+        kes = kesimpulan.get(key)
+        inferred_layak = False
+        if key == "pkh_plus":
+            inferred_layak = (
+                umur is not None and umur >= 70
+                and desil is not None and desil <= 4
+                and status_dtsen and "aktif" in str(status_dtsen).lower()
+            )
+            if not sintesis and inferred_layak:
+                sintesis = (
+                    f"Warga berusia {umur} tahun, memenuhi batas lansia 70 tahun ke atas; "
+                    f"desil nasional {desil} masuk prioritas 1-4; status DTSEN aktif."
+                )
+        elif key == "aspd":
+            inferred_layak = (
+                profile_signals.get("has_disability")
+                and umur is not None and umur <= 60
+                and desil is not None and desil <= 5
+            )
+            if not sintesis and inferred_layak:
+                sintesis = (
+                    f"Warga memiliki indikasi hambatan fungsi/disabilitas, usia {umur} tahun "
+                    f"masuk rentang ASPD, dan desil nasional {desil} masuk prioritas."
+                )
+
+        alasan = str(sintesis or "Tidak ada sintesis Tim 1 yang tersedia.")
+        if score is not None:
+            alasan = f"{alasan} Skor Tim 1: {score}."
+
+        if tim1_is_layak(kes) or inferred_layak:
+            rekomendasi.append({
+                "rank": rank,
+                "nama_program": program_name,
+                "status": "ELIGIBLE",
+                "dasar_hukum": source_ref_for_program(results, source),
+                "alasan_kelayakan": alasan,
+                "spesifikasi": spec,
+            })
+            rank += 1
+        else:
+            tidak_sesuai.append({
+                "nama_program": program_name,
+                "status": "TIDAK_ELIGIBLE",
+                "alasan": alasan,
+            })
+
+    for program_name in PROGRAM_LABELS.values():
+        if program_name not in [r["nama_program"] for r in rekomendasi] and program_name not in [r["nama_program"] for r in tidak_sesuai]:
+            tidak_sesuai.append({
+                "nama_program": program_name,
+                "status": "TIDAK_ELIGIBLE",
+                "alasan": "Tidak ada indikator profil dan hasil Tim 1 yang menunjukkan kecocokan utama untuk program ini.",
+            })
+
+    return {
+        "ringkasan_profil": ringkasan,
+        "rekomendasi": rekomendasi,
+        "program_tidak_sesuai": tidak_sesuai,
+    }
+
+
 def to_source_docs(results: list[RetrievalResult]) -> list[SourceDocument]:
     return [
         SourceDocument(
@@ -782,6 +1080,116 @@ def invoke_llm(prompt: str) -> dict:
     if not isinstance(raw, str):
         raw = raw.content
     return parse_llm_json(raw)
+
+
+def extract_chat_content(api_response: dict) -> str:
+    try:
+        content = api_response["choices"][0]["message"]["content"]
+        if isinstance(content, str):
+            return content
+    except (KeyError, IndexError, TypeError):
+        pass
+
+    raise ValueError("Response API generation tidak memiliki choices[0].message.content.")
+
+
+def call_runpod_chat_api(api_url: str, messages: list[dict]) -> str:
+    if not RUNPOD_API_KEY:
+        raise RuntimeError("RUNPOD_API_KEY belum terisi di .env.")
+
+    payload = {
+        "model": RUNPOD_MODEL_NAME,
+        "messages": messages,
+        "temperature": RUNPOD_TEMPERATURE,
+        "max_tokens": RUNPOD_MAX_TOKENS,
+    }
+    headers = {
+        "Authorization": f"Bearer {RUNPOD_API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        with httpx.Client(timeout=TIM1_API_TIMEOUT_S) as client:
+            resp = client.post(api_url, json=payload, headers=headers)
+            resp.raise_for_status()
+            return extract_chat_content(resp.json())
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"Gagal call API Tim 1/RunPod ({api_url}): {e}") from e
+
+
+def call_classification_api(profil_warga: str) -> str:
+    return call_runpod_chat_api(
+        TIM1_CLASSIFICATION_API_URL,
+        [{"role": "user", "content": profil_warga}],
+    )
+
+
+def call_generation_api(messages: list[dict]) -> dict:
+    raw_content = call_runpod_chat_api(TIM1_GENERATION_API_URL, messages)
+    return parse_llm_json(raw_content)
+
+
+def is_placeholder_generation(parsed: dict) -> bool:
+    if not isinstance(parsed, dict):
+        return True
+
+    placeholder_terms = [
+        "rangkuman singkat",
+        "nama program",
+        "rp x.xxx.xxx",
+        "penjelasan mengapa",
+        "nama dokumen dan bagian",
+        "kriteria penerima sesuai juknis",
+        "cara pencairan/penyaluran",
+    ]
+
+    def contains_placeholder(value) -> bool:
+        if isinstance(value, str):
+            lower = value.lower()
+            return any(term in lower for term in placeholder_terms)
+        if isinstance(value, dict):
+            return any(contains_placeholder(v) for v in value.values())
+        if isinstance(value, list):
+            return any(contains_placeholder(v) for v in value)
+        return False
+
+    if contains_placeholder(parsed):
+        return True
+
+    rekomendasi = parsed.get("rekomendasi")
+    tidak_sesuai = parsed.get("program_tidak_sesuai")
+    if not isinstance(rekomendasi, list) or not isinstance(tidak_sesuai, list):
+        return True
+
+    return False
+
+
+def call_generation_api_checked(messages: list[dict]) -> dict:
+    parsed = call_generation_api(messages)
+    if not is_placeholder_generation(parsed):
+        return parsed
+
+    retry_messages = messages + [
+        {
+            "role": "user",
+            "content": (
+                "Output sebelumnya ditolak karena mengulang prompt atau menyalin placeholder schema. "
+                "Jawab ulang HANYA dengan JSON final. Isi semua field dengan nilai konkret berdasarkan "
+                "profil warga, hasil Tim 1, dan konteks dokumen. Jangan menulis ulang instruksi, "
+                "jangan memakai markdown, dan jangan memakai placeholder."
+            ),
+        }
+    ]
+    parsed_retry = call_generation_api(retry_messages)
+    if is_placeholder_generation(parsed_retry):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "Model generation masih menyalin placeholder schema setelah retry.",
+                "output_preview": json.dumps(parsed_retry, ensure_ascii=False)[:700],
+            },
+        )
+    return parsed_retry
 
 
 def raise_if_parse_error(parsed: dict):
@@ -1022,24 +1430,48 @@ def recommend(req: RecommendRequest):
 
         context = build_context_grouped(results)
 
+        scoring_result = req.scoring_result or ""
+        if not scoring_result:
+            try:
+                scoring_result = call_classification_api(req.profil_warga)
+                logger.info("✅ Klasifikasi Tim 1 diterima (%d chars).", len(scoring_result))
+            except Exception as e:
+                logger.warning("⚠️ Klasifikasi Tim 1 gagal, lanjut tanpa scoring_result: %s", e)
+
         profil_section = f"=== PROFIL WARGA ===\n{req.profil_warga}"
-        if req.scoring_result:
-            profil_section += f"\n\n=== HASIL SCORING MKN1 ===\n{req.scoring_result}"
+        if scoring_result:
+            profil_section += f"\n\n=== HASIL SCORING MKN1 ===\n{scoring_result}"
 
-        if req.scoring_result:
-            final_prompt = POLICY_PROMPT_TEMPLATE.format(
-                system_prompt=JSON_RANKING_SYSTEM_PROMPT,
-                scoring_result=profil_section,
-                context=context,
-            )
-        else:
-            final_prompt = PROMPT_TEMPLATE.format(
-                system_prompt=JSON_RANKING_SYSTEM_PROMPT,
-                context=context,
-                query=profil_section,
-            )
+        user_prompt = (
+            "=== PROFIL WARGA DARI TIM 4 (ACUAN UTAMA) ===\n"
+            f"{req.profil_warga}\n"
+            "=== AKHIR PROFIL WARGA ===\n\n"
+            "=== HASIL KLASIFIKASI / SCORING TIM 1 ===\n"
+            f"{scoring_result or 'Tidak tersedia. Gunakan profil warga dan konteks dokumen.'}\n"
+            "=== AKHIR HASIL TIM 1 ===\n\n"
+            "=== KONTEKS DOKUMEN KEBIJAKAN DARI RETRIEVAL ===\n"
+            f"{context}\n"
+            "=== AKHIR KONTEKS DOKUMEN ===\n\n"
+            "INSTRUKSI EKSEKUSI:\n"
+            "1. Isi JSON dengan data konkret dari profil warga, hasil Tim 1, dan konteks dokumen.\n"
+            "2. Jika warga lansia 70+ dan desil/DTSEN memenuhi, prioritaskan evaluasi PKH Plus.\n"
+            "3. Jika warga memiliki hambatan fungsi/disabilitas dan usia memenuhi, evaluasi ASPD.\n"
+            "4. Program yang tidak cocok harus masuk program_tidak_sesuai dengan alasan spesifik.\n"
+            "5. Respons hanya JSON valid. Jangan memakai markdown, heading, atau placeholder.\n"
+        )
+        generation_messages = [
+            {"role": "system", "content": JSON_RANKING_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ]
 
-        parsed = invoke_llm(final_prompt)
+        try:
+            parsed = call_generation_api_checked(generation_messages)
+        except HTTPException as e:
+            logger.warning(
+                "⚠️ Generation API gagal menghasilkan JSON valid, fallback deterministic dipakai: %s",
+                e.detail,
+            )
+            parsed = build_fallback_generation(req.profil_warga, scoring_result, results)
         raise_if_parse_error(parsed)
 
         elapsed_ms = int((time.time() - t0) * 1000)
@@ -1052,7 +1484,7 @@ def recommend(req: RecommendRequest):
                 status=item.get("status", ""),
                 dasar_hukum=item.get("dasar_hukum"),
                 alasan_kelayakan=item.get("alasan_kelayakan"),
-                spesifikasi=SpesifikasiProgram(**item["spesifikasi"]) if item.get("spesifikasi") else None,
+                spesifikasi=normalize_spesifikasi(item.get("spesifikasi")),
             )
             for i, item in enumerate(parsed.get("rekomendasi", []))
         ]
@@ -1074,7 +1506,7 @@ def recommend(req: RecommendRequest):
             retrieval_count=len(results),
             program_count=program_count,
             elapsed_ms=elapsed_ms,
-            model_used=OLLAMA_GENERATION_MODEL,
+            model_used=RUNPOD_MODEL_NAME,
         )
 
     except HTTPException:
@@ -1342,7 +1774,7 @@ def recommend_from_mkn1(req: MKN1Request):
                 status=item.get("status", ""),
                 dasar_hukum=item.get("dasar_hukum"),
                 alasan_kelayakan=item.get("alasan_kelayakan"),
-                spesifikasi=SpesifikasiProgram(**item["spesifikasi"]) if item.get("spesifikasi") else None,
+                spesifikasi=normalize_spesifikasi(item.get("spesifikasi")),
             )
             for i, item in enumerate(parsed.get("rekomendasi", []))
         ]
