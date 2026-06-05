@@ -28,7 +28,7 @@ headers = {
 
 class QueryRequest(BaseModel):
     query: str
-    top_k: int = 3  # default 3 dokumen
+    top_k: int = config.RETRIEVAL_TOP_K
 
 @app.post("/query", response_model=dict)
 async def process_query(request: QueryRequest):
@@ -56,18 +56,18 @@ async def process_query(request: QueryRequest):
             "model": os.getenv('MODEL_NAME'),
             "messages": [
                 {"role": "system", "content": augmented_system_prompt},
-                {"role": "user", "content": QUERY}
+                {"role": "user", "content": request.query}
             ],
-            "temperature": float(os.getenv('TEMPERATURE')),
-            "max_tokens": int(os.getenv('MAX_TOKENS')),
+            "temperature": os.getenv('TEMPERATURE'),
+            "max_tokens": os.getenv('MAX_TOKENS'),
             "stop": ["<lemmauser"]
         }
 
         # 4. Request ke LLM
         response = requests.post(
-            MODEL_ENDPOINT,
+            str(MODEL_ENDPOINT),
             json=payload,
-            headers=HEADERS,
+            headers=headers,
             timeout=300
         )
         response.raise_for_status()
@@ -104,9 +104,15 @@ async def retrieve_policy(request: QueryRequest):
             ]
         }
     except requests.exceptions.HTTPError as e:
-        raise HTTPException(status_code=e.response.status_code, detail=str(e))
+        raise HTTPException(
+            status_code=e.response.status_code, 
+            detail=str(e)
+        ) from e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        ) from e
 
 if __name__ == "__main__":
     import uvicorn

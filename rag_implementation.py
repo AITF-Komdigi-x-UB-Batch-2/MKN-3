@@ -23,12 +23,12 @@ headers = {
 retrieval = retriever.retrieve(query=QUERY, top_k=config.RETRIEVAL_TOP_K)
 
 # fase augmentation
-retrieval_text = "\n\n".join([doc.text for doc in retrieval])
-augmented_system_prompt = (
+RETRIEVAL_TEXT = "\n\n".join([doc.text for doc in retrieval])
+AUGEMENTED_SYSTEM_PROMPT = (
     f"{SYSTEM_PROMPT['content']}\n\n"
     f"Berikut adalah konteks untuk Anda menentukan kebijakan:\n"
     f"<Konteks Policy>\n"
-    f"{retrieval_text}\n"
+    f"{RETRIEVAL_TEXT}\n"
     f"</Konteks Policy>"
 )
 
@@ -38,16 +38,16 @@ augmented_system_prompt = (
 payload = {
     "model": os.getenv('MODEL_NAME'),
     "messages": [
-        {"role": "system", "content": augmented_system_prompt},
+        {"role": "system", "content": AUGEMENTED_SYSTEM_PROMPT},
         {"role": "user", "content": QUERY}
     ],
-    "temperature": float(os.getenv('TEMPERATURE')),
-    "max_tokens": int(os.getenv('MAX_TOKENS')),
+    "temperature": os.getenv('TEMPERATURE'),
+    "max_tokens": os.getenv('MAX_TOKENS'),
     "stop": ["<lemmauser"]
 }
 
 ## send request ke endpoint
-response = requests.post(MODEL_ENDPOINT, json=payload, headers=headers, timeout=300)
+response = requests.post(str(MODEL_ENDPOINT), json=payload, headers=headers, timeout=300)
 response.raise_for_status()
 
 ## print hasil
