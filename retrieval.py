@@ -162,26 +162,12 @@ class PolicyRetriever:
 
 
 if __name__ == "__main__":
-    # Setup logging agar log dari PolicyRetriever muncul di console
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s"
-    )
-    
-    print("🚀 Menjalankan uji coba retrieval secara langsung...")
-    try:
-        retriever = PolicyRetriever()
-        
-        # Jalankan tes query
-        test_query = "Kriteria lansia penerima bantuan sosial PKH Plus"
-        print(f"\n🔍 Melakukan retrieve untuk query: '{test_query}'")
-        
-        results = retriever.retrieve(test_query, top_k=3)
-        
-        print(f"\n📊 Hasil Pencarian ({len(results)} chunks):")
-        for idx, r in enumerate(results, 1):
-            print(f"\n[{idx}] Skor: {r.score:.4f} | Sumber: {r.metadata.get('sumber', 'Unknown')} (Hal. {r.metadata.get('page_number', '?')})")
-            print(f"    Teks: {r.text[:250].replace(chr(10), ' ').strip()}...")
-            
-    except Exception as e:
-        print(f"❌ Terjadi kesalahan: {e}")
+    # Setup logging to console for testing
+    logging.basicConfig(level=logging.INFO)
+    retriever = PolicyRetriever()
+    test_query = "Kriteria lansia penerima bantuan sosial PKH Plus"
+    print(f"\n🔍 Melakukan retrieve untuk query: '{test_query}'")
+    hits = retriever.retrieve(test_query, top_k=3)
+    for idx, hit in enumerate(hits, 1):
+        print(f"\n[{idx}] Score: {hit.score:.4f} | Embed Score: {hit.embed_score:.4f} | Sumber: {hit.metadata.get('sumber')}")
+        print(f"Preview: {hit.text[:150]}...")
