@@ -10,6 +10,17 @@ from config import RETRIEVAL_TOP_K, RERANK_TOP_N, RUNPOD_MODEL_NAME
 # ============================================================
 
 class RecommendRequest(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "profil_warga": "Profil Warga:\n- NIK: PRS_d958ca14a8a0ffb...\n- Umur: 72 tahun\n- Desil Nasional: 2\n- Status DTSEN: DTSEN AKTIF\n- Wilayah: Kabupaten Malang, Jawa Timur\n\nTolong buatkan laporan evaluasi kelayakan untuk program PKH Plus dan ASPD.",
+                "scoring_result": "",
+                "top_k": 40,
+                "top_n": 4
+            }
+        }
+    }
+
     profil_warga: Optional[str] = Field(
         default=None,
         min_length=10,
@@ -73,6 +84,17 @@ class AskRequest(BaseModel):
 
 
 class RetrieveOnlyRequest(BaseModel):
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "content": "Profil Warga:\n- NIK: PRS_d958ca14a8a0ffb...\n- Umur: 72 tahun\n- Desil Nasional: 2\n- Status DTSEN: DTSEN AKTIF\n- Wilayah: Kabupaten Malang, Jawa Timur\n\nTolong buatkan laporan evaluasi kelayakan untuk program PKH Plus dan ASPD.",
+                "filter_programs_only": True,
+                "top_k": 40,
+                "top_n": 4
+            }
+        }
+    }
+
     """
     Request model untuk endpoint /retrieve.
 
