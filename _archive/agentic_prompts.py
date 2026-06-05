@@ -5,11 +5,6 @@ These prompts are not used by the active pure-6-program RAG flow. They were
 moved out of config.py to keep active configuration focused on standard RAG.
 """
 
-import os
-
-
-OLLAMA_SCORING_MODEL = os.getenv("OLLAMA_SCORING_MODEL", "qwen-MKN1.gguf")
-
 SCORING_SYSTEM_PROMPT = (
     "Anda adalah SIRA (Sistem Rekomender Intervensi & Kebijakan Program Sosial), asisten ahli milik Tim 4 Universitas Brawijaya "
     "yang berspesialisasi dalam analisis profil kesejahteraan sosial keluarga di Indonesia.\n\n"

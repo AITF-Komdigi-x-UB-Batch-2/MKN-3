@@ -4,7 +4,6 @@
 #
 # Endpoints:
 #   POST /recommend              → Profil warga → ranking program bantuan (JSON terstruktur)
-#   POST /recommend-from-mkn1   → Output JSON Tim 1 → ranking program bantuan
 #   POST /ask                   → Tanya juknis bebas (JSON terstruktur)
 #   POST /retrieve              → Retrieval-only tanpa LLM generation
 #   GET  /health                → Status Qdrant + model
@@ -18,8 +17,8 @@
 #
 # Changelog v3:
 #   [Bug 1] Hapus pemotongan [:300] di query_for_retrieval pada endpoint
-#           /recommend dan /recommend-from-mkn1; gunakan
-#           _parse_content_to_retrieval_query() untuk seluruh string profil.
+#           /recommend; gunakan _parse_content_to_retrieval_query() untuk
+#           seluruh string profil.
 #   [Bug 2] _parse_content_to_retrieval_query: tambahkan safe JSON parsing
 #           di awal fungsi sebelum fallback ke Regex.
 #   [Bug 3] Pemfilteran PROGRAM_LABELS dipindahkan ke native Qdrant filter
@@ -43,7 +42,6 @@ os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 from config import (
     QDRANT_URL, QDRANT_COLLECTION,
     EMBED_MODEL_NAME,
-    OLLAMA_BASE_URL, OLLAMA_GENERATION_MODEL, OLLAMA_TEMPERATURE,
     PROMPT_TEMPLATE, POLICY_PROMPT_TEMPLATE,
     RETRIEVAL_TOP_K, RERANK_TOP_N,
     TIM1_CLASSIFICATION_API_URL, TIM1_GENERATION_API_URL, TIM1_API_TIMEOUT_S,
@@ -83,39 +81,36 @@ for noisy in ["httpx", "httpcore", "sentence_transformers", "transformers"]:
 # SYSTEM PROMPTS — Paksa LLM output JSON
 # ============================================================
 
-JSON_RANKING_SYSTEM_PROMPT = """Anda adalah SIRA (Sistem Rekomender Intervensi & Kebijakan Program Sosial), \
-asisten pakar kebijakan sosial milik Tim 3 Universitas Brawijaya.
-
-Tugas Anda: Berdasarkan PROFIL WARGA dan KONTEKS PROGRAM BANTUAN yang disediakan, \
-evaluasi kelayakan warga HANYA untuk 6 program utama berikut:
-1. Asistensi Sosial Penyandang Disabilitas (ASPD)
-2. Penanganan Kemiskinan Ekstrem
-3. PKH Plus (Lanjut Usia 70+)
-4. KIP KPM JAWARA (Kewirausahaan KPM)
-5. KIP PPKS JAWARA (Penyandang Masalah Sosial)
-6. KIP Putri JAWARA (Perempuan Tangguh)
-
-=== INSTRUKSI PENTING ===
-1. Evaluasi hanya 6 program utama di atas secara individual.
-2. Tentukan status: "ELIGIBLE", "MUNGKIN_ELIGIBLE", atau "TIDAK_ELIGIBLE".
-3. Ranking dari yang paling cocok ke yang paling tidak cocok.
-4. Sertakan spesifikasi teknis: nominal bantuan, frekuensi, syarat dokumen, mekanisme.
-5. Berikan reasoning yang jelas dan WAJIB mengutip sumber dokumen.
-6. JANGAN merekomendasikan program di luar 6 program utama.
-7. DILARANG menyebut Program Sembako, PKH reguler, BPNT, PBI Jaminan Kesehatan, Rutilahu, PIP, Jamkesda, atau bantuan tambahan lain.
-
-=== FORMAT OUTPUT ===
-Anda WAJIB merespons HANYA dengan JSON valid tanpa markdown dan tanpa teks pembuka/penutup.
-Gunakan key berikut persis:
-- ringkasan_profil: string konkret berisi umur, desil, DTSEN/DTKS, disabilitas/usia lansia, dan kondisi kunci warga.
-- rekomendasi: array program yang ELIGIBLE atau MUNGKIN_ELIGIBLE. Setiap item wajib berisi rank, nama_program, status, dasar_hukum, alasan_kelayakan, spesifikasi.
-- spesifikasi: object berisi nominal_bantuan, frekuensi, sasaran, syarat_dokumen, mekanisme.
-- program_tidak_sesuai: array program TIDAK_ELIGIBLE. Setiap item wajib berisi nama_program, status, alasan.
-
-Larangan keras:
-- Jangan menyalin placeholder seperti "Nama Program", "Rp X.XXX.XXX", "dst", "rangkuman singkat", atau "Penjelasan mengapa".
-- Jangan mengosongkan alasan. Semua alasan harus merujuk kondisi warga dan kriteria dokumen.
-- nama_program harus salah satu dari 6 program utama yang disebut di atas.
+JSON_RANKING_SYSTEM_PROMPT = """Anda adalah AI Auditor resmi Dinas Sosial Provinsi Jawa Timur yang bertugas melakukan verifikasi dan validasi kelayakan penerima manfaat dua program bantuan sosial.
+    
+    Tugas Anda: Berdasarkan PROFIL WARGA dan KONTEKS PROGRAM BANTUAN yang disediakan, \
+    evaluasi kelayakan warga HANYA untuk 2 program utama berikut:
+    1. Asistensi Sosial Penyandang Disabilitas (ASPD)
+    2. PKH Plus (Lanjut Usia 70+)
+    
+    === INSTRUKSI PENTING ===
+    1. Evaluasi hanya 2 program utama di atas secara individual.
+    2. Tentukan status: "ELIGIBLE", atau "TIDAK_ELIGIBLE".
+    3. Ranking dari yang paling cocok ke yang paling tidak cocok.
+    4. Sertakan spesifikasi teknis: nominal bantuan, frekuensi, syarat dokumen, mekanisme.
+    5. Berikan reasoning yang jelas dan WAJIB mengutip sumber dokumen.
+    6. JANGAN merekomendasikan program di luar 2 program utama.
+    7. DILARANG menyebut Program Sembako, PKH reguler, BPNT, PBI Jaminan Kesehatan, Rutilahu, PIP, Jamkesda, atau bantuan tambahan lain.
+    8. Hard rule PKH Plus: hanya untuk lanjut usia 70 tahun ke atas. Jika umur warga kurang dari 70 tahun, PKH Plus WAJIB TIDAK_ELIGIBLE walaupun desil/DTSEN aktif atau ada hambatan fungsi.
+    9. Hambatan fungsi/disabilitas dievaluasi untuk ASPD, bukan alasan meloloskan PKH Plus.
+    
+    === FORMAT OUTPUT ===
+    Anda WAJIB merespons HANYA dengan JSON valid tanpa markdown dan tanpa teks pembuka/penutup.
+    Gunakan key berikut persis:
+    - ringkasan_profil: string konkret berisi umur, desil, DTSEN/DTKS, disabilitas/usia lansia, dan kondisi kunci warga.
+    - rekomendasi: array program yang ELIGIBLE. Setiap item wajib berisi rank, nama_program, status, dasar_hukum, alasan_kelayakan, spesifikasi.
+    - spesifikasi: object berisi nominal_bantuan, frekuensi, sasaran, syarat_dokumen, mekanisme.
+    - program_tidak_sesuai: array program TIDAK_ELIGIBLE. Setiap item wajib berisi nama_program, status, alasan.
+    
+    Larangan keras:
+    - Jangan menyalin placeholder seperti "Nama Program", "Rp X.XXX.XXX", "dst", "rangkuman singkat", atau "Penjelasan mengapa".
+    - Jangan mengosongkan alasan. Semua alasan harus merujuk kondisi warga dan kriteria dokumen.
+    - nama_program harus salah satu dari 2 program utama yang disebut di atas.
 """
 
 JSON_ASK_SYSTEM_PROMPT = """Anda adalah SIRA (Sistem Rekomender Intervensi & Kebijakan Program Sosial), \
@@ -158,7 +153,7 @@ RETRIEVE_SYSTEM_PROMPT = (
 
 class AppState:
     retriever: Optional[object] = None
-    llm: Optional[OllamaLLM] = None
+    llm: Optional[object] = None
     ready: bool = False
     startup_error: Optional[str] = None
     startup_time: Optional[float] = None
@@ -176,15 +171,10 @@ async def lifespan(app: FastAPI):
     t0 = time.time()
     try:
         state.retriever = PolicyRetriever()
-        state.llm = OllamaLLM(
-            base_url=OLLAMA_BASE_URL,
-            model=OLLAMA_GENERATION_MODEL,
-            temperature=OLLAMA_TEMPERATURE,
-            num_ctx=8192,
-        )
+        state.llm = None
         state.ready = True
         state.startup_time = round(time.time() - t0, 2)
-        logger.info("✅ Semua model siap dalam %.2fs.", state.startup_time)
+        logger.info("✅ Retrieval siap dalam %.2fs. Generation memakai API RunPod.", state.startup_time)
     except Exception as e:
         state.ready = False
         state.startup_error = str(e)
@@ -204,7 +194,7 @@ app = FastAPI(
     description=(
         "**SIRA — Sistem Rekomender Intervensi & Kebijakan Program Sosial**\n\n"
         "REST API untuk sistem rekomendasi program bantuan sosial berbasis RAG.\n\n"
-        "Pipeline: `Qdrant Semantic Search` → `Ollama LLM Generation`\n\n"
+        "Pipeline: `Qdrant Semantic Search` → `RunPod/OpenAI-compatible LLM Generation`\n\n"
         "Tim 3 Universitas Brawijaya × DISKOMINFO Jawa Timur (AITF 2026)"
     ),
     version="3.0.0",
@@ -723,8 +713,8 @@ def _parse_content_to_retrieval_query(content: str) -> str:
     return f"syarat kriteria sasaran penerima bantuan sosial: {base}"
 
 
-def check_ready():
-    if not state.ready or state.retriever is None or state.llm is None:
+def check_ready(require_llm: bool = False):
+    if not state.ready or state.retriever is None or (require_llm and state.llm is None):
         raise HTTPException(
             status_code=503,
             detail={
@@ -852,6 +842,139 @@ def parse_profile_signals(profil_warga: str) -> dict:
         "skor_aspd": skor_aspd,
         "has_disability": has_disability,
     }
+
+
+def infer_retrieval_sources_from_profile(content: str) -> Optional[list[str]]:
+    signals = parse_profile_signals(content)
+    age = signals.get("umur")
+    desil = signals.get("desil_nasional")
+    skor_pkh = signals.get("skor_pkh_plus")
+    skor_aspd = signals.get("skor_aspd")
+    has_disability = bool(signals.get("has_disability"))
+
+    target_sources: list[str] = []
+
+    pkh_score_positive = skor_pkh is not None and float(skor_pkh) > 0.3
+    aspd_score_positive = skor_aspd is not None and float(skor_aspd) > 0.3
+
+    pkh_profile_match = (
+        age is not None
+        and age >= 70
+        and (desil is None or int(desil) <= 4)
+        and (skor_pkh is None or float(skor_pkh) > 0.05)
+    )
+    aspd_profile_match = has_disability and (skor_aspd is None or float(skor_aspd) > 0.05)
+
+    if aspd_score_positive or aspd_profile_match:
+        target_sources.append("Juklak ASPD Tahun 202620260225_12303533_01.pdf")
+
+    if pkh_score_positive or pkh_profile_match:
+        target_sources.append("JUKNIS PKH PLUS 2026.pdf")
+
+    return target_sources or None
+
+
+def retrieval_prompt_for_sources(sources: Optional[list[str]]) -> str:
+    if not sources:
+        return RETRIEVE_SYSTEM_PROMPT
+
+    program_names = [
+        PROGRAM_LABELS.get(source, source.replace(".pdf", ""))
+        for source in sources
+    ]
+    return (
+        "Temukan syarat kelayakan, kriteria sasaran penerima, besaran nominal bantuan, "
+        "dan mekanisme pencairan untuk program berikut berdasarkan petunjuk teknis resmi: "
+        + "; ".join(program_names)
+        + "."
+    )
+
+
+def normalize_program_name(name: str) -> str:
+    lower = (name or "").lower()
+    if "pkh" in lower and "plus" in lower:
+        return "PKH Plus (Lanjut Usia 70+)"
+    if "aspd" in lower or "disabilitas" in lower:
+        return "Asistensi Sosial Penyandang Disabilitas (ASPD)"
+    for program_name in PROGRAM_LABELS.values():
+        if lower == program_name.lower():
+            return program_name
+    return name or ""
+
+
+def enforce_program_eligibility_rules(parsed: dict, profil_warga: str) -> dict:
+    """
+    Guardrail deterministik setelah LLM.
+    LLM tidak boleh meloloskan program yang melanggar hard rule juknis.
+    """
+    if not isinstance(parsed, dict):
+        return parsed
+
+    signals = parse_profile_signals(profil_warga)
+    age = signals.get("umur")
+    skor_pkh = signals.get("skor_pkh_plus")
+
+    data = parsed.copy()
+    rekomendasi_raw = data.get("rekomendasi") if isinstance(data.get("rekomendasi"), list) else []
+    tidak_sesuai_raw = (
+        data.get("program_tidak_sesuai")
+        if isinstance(data.get("program_tidak_sesuai"), list)
+        else []
+    )
+
+    rekomendasi: list[dict] = []
+    tidak_sesuai: list[dict] = [
+        item.copy() for item in tidak_sesuai_raw if isinstance(item, dict)
+    ]
+
+    def add_tidak_sesuai(program_name: str, alasan: str):
+        canonical = normalize_program_name(program_name)
+        for item in tidak_sesuai:
+            if normalize_program_name(str(item.get("nama_program") or "")) == canonical:
+                item["nama_program"] = canonical
+                item["status"] = "TIDAK_ELIGIBLE"
+                item["alasan"] = alasan
+                return
+        tidak_sesuai.append({
+            "nama_program": canonical,
+            "status": "TIDAK_ELIGIBLE",
+            "alasan": alasan,
+        })
+
+    for item in rekomendasi_raw:
+        if not isinstance(item, dict):
+            continue
+        current = item.copy()
+        canonical = normalize_program_name(str(current.get("nama_program") or ""))
+        current["nama_program"] = canonical
+
+        is_pkh_plus = canonical == "PKH Plus (Lanjut Usia 70+)"
+        if is_pkh_plus and age is not None and age < 70:
+            alasan = (
+                f"Tidak memenuhi hard rule PKH Plus: usia warga {age} tahun, "
+                "sedangkan sasaran PKH Plus adalah lanjut usia 70 tahun ke atas."
+            )
+            if skor_pkh is not None:
+                alasan += f" Skor PKH Plus dari profil: {skor_pkh}."
+            add_tidak_sesuai(canonical, alasan)
+            continue
+
+        if is_pkh_plus and skor_pkh is not None and float(skor_pkh) <= 0.05:
+            add_tidak_sesuai(
+                canonical,
+                f"Tidak direkomendasikan karena skor PKH Plus dari profil adalah {skor_pkh}, "
+                "di bawah ambang prioritas."
+            )
+            continue
+
+        rekomendasi.append(current)
+
+    for idx, item in enumerate(rekomendasi, 1):
+        item["rank"] = idx
+
+    data["rekomendasi"] = rekomendasi
+    data["program_tidak_sesuai"] = tidak_sesuai
+    return data
 
 
 def source_ref_for_program(results: list[RetrievalResult], source_filename: str) -> str:
@@ -1075,6 +1198,11 @@ def parse_llm_json(raw: str) -> dict:
 
 
 def invoke_llm(prompt: str) -> dict:
+    if state.llm is None:
+        raise HTTPException(
+            status_code=503,
+            detail="LLM lokal tidak aktif. Gunakan endpoint /recommend yang memakai API RunPod.",
+        )
     raw = state.llm.invoke(prompt)
     if not isinstance(raw, str):
         raw = raw.content
@@ -1112,6 +1240,15 @@ def call_runpod_chat_api(api_url: str, messages: list[dict]) -> str:
             resp = client.post(api_url, json=payload, headers=headers)
             resp.raise_for_status()
             return extract_chat_content(resp.json())
+    except httpx.HTTPStatusError as e:
+        response = e.response
+        body_preview = response.text[:1000] if response is not None else ""
+        raise RuntimeError(
+            f"Gagal call API Tim 1/RunPod ({api_url}): "
+            f"HTTP {response.status_code if response is not None else 'unknown'} "
+            f"{response.reason_phrase if response is not None else ''}. "
+            f"Response body: {body_preview}"
+        ) from e
     except httpx.HTTPError as e:
         raise RuntimeError(f"Gagal call API Tim 1/RunPod ({api_url}): {e}") from e
 
@@ -1355,7 +1492,7 @@ def health():
             "collection": QDRANT_COLLECTION,
             "embed_model": EMBED_MODEL_NAME,
             # "reranker": RERANKER_MODEL_NAME,  # Dinonaktifkan untuk uji coba semantic-only.
-            "llm_model": OLLAMA_GENERATION_MODEL,
+            "llm_model": RUNPOD_MODEL_NAME,
             "default_top_k": RETRIEVAL_TOP_K,
             "default_top_n": RERANK_TOP_N,
         }
@@ -1403,8 +1540,11 @@ def recommend(req: RecommendRequest):
         # BGE-M3 mendukung context window besar (8192 token), sehingga
         # informasi disabilitas, usaha, dll. di bagian bawah profil tidak hilang.
         query_for_retrieval = _parse_content_to_retrieval_query(req.profil_warga)
+        inferred_sources = infer_retrieval_sources_from_profile(req.profil_warga)
 
         logger.info("🔎 /recommend effective_query: %s", query_for_retrieval[:200])
+        if inferred_sources:
+            logger.info("🎯 /recommend target program sources: %s", inferred_sources)
 
         # [Bug 3 Fix] Filter 6 program utama dilakukan secara native di Qdrant
         # via allowed_sources — bukan post-filter list comprehension.
@@ -1420,7 +1560,7 @@ def recommend(req: RecommendRequest):
             query_for_retrieval,
             top_k=top_k,
             top_n=top_n,
-            allowed_sources=list(PROGRAM_LABELS.keys()),   # [Bug 3 Fix]
+            allowed_sources=inferred_sources or list(PROGRAM_LABELS.keys()),   # [Bug 3 Fix]
         )
 
         if not results:
@@ -1454,9 +1594,10 @@ def recommend(req: RecommendRequest):
             "INSTRUKSI EKSEKUSI:\n"
             "1. Isi JSON dengan data konkret dari profil warga, hasil Tim 1, dan konteks dokumen.\n"
             "2. Jika warga lansia 70+ dan desil/DTSEN memenuhi, prioritaskan evaluasi PKH Plus.\n"
-            "3. Jika warga memiliki hambatan fungsi/disabilitas dan usia memenuhi, evaluasi ASPD.\n"
-            "4. Program yang tidak cocok harus masuk program_tidak_sesuai dengan alasan spesifik.\n"
-            "5. Respons hanya JSON valid. Jangan memakai markdown, heading, atau placeholder.\n"
+            "3. Jika umur warga kurang dari 70 tahun, PKH Plus wajib TIDAK_ELIGIBLE.\n"
+            "4. Jika warga memiliki hambatan fungsi/disabilitas dan usia memenuhi, evaluasi ASPD.\n"
+            "5. Program yang tidak cocok harus masuk program_tidak_sesuai dengan alasan spesifik.\n"
+            "6. Respons hanya JSON valid. Jangan memakai markdown, heading, atau placeholder.\n"
         )
         generation_messages = [
             {"role": "system", "content": JSON_RANKING_SYSTEM_PROMPT},
@@ -1471,7 +1612,14 @@ def recommend(req: RecommendRequest):
                 e.detail,
             )
             parsed = build_fallback_generation(req.profil_warga, scoring_result, results)
+        except Exception as e:
+            logger.warning(
+                "⚠️ Generation API Tim 1/RunPod gagal, fallback deterministic dipakai: %s",
+                e,
+            )
+            parsed = build_fallback_generation(req.profil_warga, scoring_result, results)
         raise_if_parse_error(parsed)
+        parsed = enforce_program_eligibility_rules(parsed, req.profil_warga)
 
         elapsed_ms = int((time.time() - t0) * 1000)
         program_count = len(set(r.metadata.get("sumber", "") for r in results))
@@ -1532,7 +1680,7 @@ def ask(req: AskRequest):
     - `poin_penting[]` — ringkasan dalam poin-poin
     - `sources[]` — metadata chunk untuk audit
     """
-    check_ready()
+    check_ready(require_llm=True)
     t0 = time.time()
 
     try:
@@ -1568,7 +1716,7 @@ def ask(req: AskRequest):
             sources=to_source_docs(results),
             retrieval_count=len(results),
             elapsed_ms=elapsed_ms,
-            model_used=OLLAMA_GENERATION_MODEL,
+            model_used=RUNPOD_MODEL_NAME,
         )
 
     except HTTPException:
@@ -1605,17 +1753,25 @@ def retrieve_only(req: RetrieveOnlyRequest):
 
         # ── Step 1: Parse content → keyword query padat ─────────────────────
         effective_query = _parse_content_to_retrieval_query(req.content)
+        inferred_sources = infer_retrieval_sources_from_profile(req.content)
 
-        # ── Step 2: Gabungkan RETRIEVE_SYSTEM_PROMPT dari konstanta kode ────
-        if RETRIEVE_SYSTEM_PROMPT and RETRIEVE_SYSTEM_PROMPT.strip():
-            effective_query = f"{RETRIEVE_SYSTEM_PROMPT.strip()}\n\n{effective_query}"
+        # ── Step 2: Gabungkan prompt retrieval sesuai program target ────────
+        retrieval_prompt = retrieval_prompt_for_sources(inferred_sources)
+        if retrieval_prompt and retrieval_prompt.strip():
+            effective_query = f"{retrieval_prompt.strip()}\n\n{effective_query}"
 
         logger.info("🔎 /retrieve effective_query (200 chars): %s", effective_query[:200])
 
         # ── Step 3: Jalankan retrieval ──────────────────────────────────────
         # [Bug 3 Fix] filter_programs_only sekarang menggunakan native Qdrant
         # allowed_sources, bukan post-filter Python setelah retrieval.
-        allowed = list(PROGRAM_LABELS.keys()) if req.filter_programs_only else None
+        allowed = (
+            inferred_sources
+            if inferred_sources
+            else list(PROGRAM_LABELS.keys()) if req.filter_programs_only else None
+        )
+        if inferred_sources:
+            logger.info("🎯 /retrieve target program sources: %s", inferred_sources)
         # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
         # results = state.retriever.retrieve(
         #     effective_query,
@@ -1674,134 +1830,6 @@ def retrieve_only(req: RetrieveOnlyRequest):
         raise
     except Exception as e:
         logger.error("❌ /retrieve error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
-
-
-@app.post("/recommend-from-mkn1", response_model=RecommendResponse, tags=["RAG"],
-          summary="Rekomendasi langsung dari output JSON Tim 1 (MKN1)")
-def recommend_from_mkn1(req: MKN1Request):
-    """
-    **Mode Integrasi Tim 1 → Tim 3: JSON MKN1 → Rekomendasi Program Bantuan**
-
-    Endpoint ini menerima **output JSON langsung dari model Tim 1 (MKN1)**
-    tanpa perlu konversi manual. Parser akan otomatis mengubahnya menjadi
-    teks profil dan skor untuk sistem RAG Tim 3 Universitas Brawijaya.
-
-    **Alur:**
-    `Output JSON MKN1` → `Parser MKN1` → `Profil Teks + Skor` → `RAG Pipeline` → `Ranking 6 Program`
-
-    **Contoh penggunaan:**
-    Tempelkan langsung JSON dari endpoint MKN1 ke dalam Body request ini.
-    """
-    check_ready()
-    t0 = time.time()
-
-    try:
-        # ── Parse output MKN1 ke format RAG ────────────────────
-        profil_warga, scoring_result = parse_mkn1_to_profil_warga(req)
-
-        if len(profil_warga.strip()) < 20:
-            raise HTTPException(
-                status_code=422,
-                detail="Data dari MKN1 tidak cukup untuk membuat profil warga. "
-                       "Pastikan field laporan_evaluasi dan parameter terisi."
-            )
-
-        logger.info("📥 MKN1 parsed:\n%s", profil_warga[:300])
-
-        # [Bug 3 Fix] top_k dinaikkan ke minimal 40 (sama dengan /recommend)
-        top_k = max(req.top_k or RETRIEVAL_TOP_K, 40)
-        top_n = req.top_n or RERANK_TOP_N
-
-        # [Bug 1 Fix] Gunakan _parse_content_to_retrieval_query() atas
-        # SELURUH profil_warga tanpa [:300] slicing.
-        query_for_retrieval = _parse_content_to_retrieval_query(profil_warga)
-
-        logger.info("🔎 /recommend-from-mkn1 effective_query: %s", query_for_retrieval[:200])
-
-        # [Bug 3 Fix] Filter native Qdrant via allowed_sources — hapus
-        # post-filter list comprehension yang membuang kuota top_n.
-        # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
-        # results = state.retriever.retrieve(
-        #     query_for_retrieval,
-        #     top_k=top_k,
-        #     top_n=top_n,
-        #     allowed_sources=list(PROGRAM_LABELS.keys()),   # [Bug 3 Fix]
-        # )
-        results = retrieve_semantic_only(
-            query_for_retrieval,
-            top_k=top_k,
-            top_n=top_n,
-            allowed_sources=list(PROGRAM_LABELS.keys()),   # [Bug 3 Fix]
-        )
-
-        if not results:
-            raise HTTPException(
-                status_code=404,
-                detail="Tidak ada dokumen 6 program utama yang relevan ditemukan."
-            )
-
-        context = build_context_grouped(results)
-
-        profil_section = f"=== PROFIL WARGA ===\n{profil_warga}"
-        if scoring_result:
-            profil_section += f"\n\n=== HASIL SCORING MKN1 ===\n{scoring_result}"
-
-        if scoring_result:
-            final_prompt = POLICY_PROMPT_TEMPLATE.format(
-                system_prompt=JSON_RANKING_SYSTEM_PROMPT,
-                scoring_result=profil_section,
-                context=context,
-            )
-        else:
-            final_prompt = PROMPT_TEMPLATE.format(
-                system_prompt=JSON_RANKING_SYSTEM_PROMPT,
-                context=context,
-                query=profil_section,
-            )
-
-        parsed = invoke_llm(final_prompt)
-        raise_if_parse_error(parsed)
-
-        elapsed_ms = int((time.time() - t0) * 1000)
-        program_count = len(set(r.metadata.get("sumber", "") for r in results))
-
-        rekomendasi = [
-            RekomendasiProgram(
-                rank=item.get("rank", i + 1),
-                nama_program=item.get("nama_program", ""),
-                status=item.get("status", ""),
-                dasar_hukum=item.get("dasar_hukum"),
-                alasan_kelayakan=item.get("alasan_kelayakan"),
-                spesifikasi=normalize_spesifikasi(item.get("spesifikasi")),
-            )
-            for i, item in enumerate(parsed.get("rekomendasi", []))
-        ]
-
-        tidak_sesuai = [
-            ProgramTidakSesuai(
-                nama_program=item.get("nama_program", ""),
-                status=item.get("status", "TIDAK_ELIGIBLE"),
-                alasan=item.get("alasan"),
-            )
-            for item in parsed.get("program_tidak_sesuai", [])
-        ]
-
-        return RecommendResponse(
-            ringkasan_profil=parsed.get("ringkasan_profil", ""),
-            rekomendasi=rekomendasi,
-            program_tidak_sesuai=tidak_sesuai,
-            sources=to_source_docs(results),
-            retrieval_count=len(results),
-            program_count=program_count,
-            elapsed_ms=elapsed_ms,
-            model_used=OLLAMA_GENERATION_MODEL,
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("❌ /recommend-from-mkn1 error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 

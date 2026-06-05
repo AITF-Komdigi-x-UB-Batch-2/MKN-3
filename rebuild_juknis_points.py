@@ -127,13 +127,6 @@ def init_embedding_model():
 
     logger.info("🖥️  Embedding device: %s", device.upper())
 
-    if ":" in EMBED_MODEL_NAME or "ollama" in EMBED_MODEL_NAME.lower():
-        from langchain_ollama import OllamaEmbeddings
-        from config import OLLAMA_BASE_URL
-        embeddings = OllamaEmbeddings(base_url=OLLAMA_BASE_URL, model=EMBED_MODEL_NAME)
-        logger.info("✅ Ollama embedding siap.")
-        return embeddings
-
     if device in ("cuda", "mps"):
         model_kwargs = {
             "device": device,

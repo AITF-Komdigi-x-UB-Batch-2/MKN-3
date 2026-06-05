@@ -8,8 +8,9 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables dari file .env
-load_dotenv()
+# Load environment variables dari file .env.
+# override=True memastikan perubahan .env menang atas env shell lama.
+load_dotenv(override=True)
 
 # ============================================================
 # BASE DIRECTORY — otomatis menggunakan lokasi script ini
@@ -96,12 +97,10 @@ RERANK_TOP_N = 4
 # ============================================================
 # KONFIGURASI GENERATION / LLM (Stage F)
 # ============================================================
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_GENERATION_MODEL = os.getenv("OLLAMA_GENERATION_MODEL", "mkn1-model-qwen3v1")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", OLLAMA_GENERATION_MODEL)
-OLLAMA_TEMPERATURE = float(os.getenv("OLLAMA_TEMPERATURE", "0.0"))
+DEFAULT_GENERATION_MODEL = os.getenv("MODEL_NAME", "aitf-ub-2026/qwen3-8b-cpt-sft-v2")
+DEFAULT_TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
 
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "runpod")
 HF_GENERATION_MODEL = os.getenv("HF_GENERATION_MODEL", "")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 
@@ -113,20 +112,20 @@ TIM1_CLASSIFICATION_API_URL = os.getenv(
     "TIM1_CLASSIFICATION_API_URL",
     os.getenv(
         "MODEL_ENDPOINT",
-        "https://api.runpod.ai/v2/hhv4lelezfg0mv/openai/v1/chat/completions",
+        "https://api.runpod.ai/v2/j9gtpnswa09lnf/openai/v1/chat/completions",
     ),
 )
 TIM1_GENERATION_API_URL = os.getenv(
     "TIM1_GENERATION_API_URL",
     os.getenv(
         "MODEL_ENDPOINT",
-        "https://api.runpod.ai/v2/hhv4lelezfg0mv/openai/v1/chat/completions",
+        "https://api.runpod.ai/v2/j9gtpnswa09lnf/openai/v1/chat/completions",
     ),
 )
 TIM1_API_TIMEOUT_S = float(os.getenv("TIM1_API_TIMEOUT_S", "120"))
 RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY", "").strip().strip('"').strip("'")
-RUNPOD_MODEL_NAME = os.getenv("MODEL_NAME", OLLAMA_GENERATION_MODEL).strip().strip('"').strip("'")
-RUNPOD_TEMPERATURE = float(os.getenv("TEMPERATURE", str(OLLAMA_TEMPERATURE)))
+RUNPOD_MODEL_NAME = DEFAULT_GENERATION_MODEL.strip().strip('"').strip("'")
+RUNPOD_TEMPERATURE = DEFAULT_TEMPERATURE
 RUNPOD_MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))
 
 # ============================================================
@@ -366,9 +365,10 @@ if __name__ == "__main__":
     print(f"   RERANKER_MODEL_NAME : {RERANKER_MODEL_NAME}")
     print(f"   RETRIEVAL_TOP_K     : {RETRIEVAL_TOP_K}")
     print(f"   RERANK_TOP_N        : {RERANK_TOP_N}")
-    print(f"   OLLAMA_BASE_URL     : {OLLAMA_BASE_URL}")
-    print(f"   OLLAMA_GENERATION_MODEL : {OLLAMA_GENERATION_MODEL}")
-    print(f"   OLLAMA_MODEL (alias)    : {OLLAMA_MODEL}")
-    print(f"   OLLAMA_TEMPERATURE  : {OLLAMA_TEMPERATURE}")
+    print(f"   TIM1_CLASSIFICATION_API_URL : {TIM1_CLASSIFICATION_API_URL}")
+    print(f"   TIM1_GENERATION_API_URL     : {TIM1_GENERATION_API_URL}")
+    print(f"   RUNPOD_MODEL_NAME           : {RUNPOD_MODEL_NAME}")
+    print(f"   RUNPOD_TEMPERATURE          : {RUNPOD_TEMPERATURE}")
+    print(f"   RUNPOD_MAX_TOKENS           : {RUNPOD_MAX_TOKENS}")
     ensure_dirs()
     print("\n✅ Semua folder output sudah siap.")

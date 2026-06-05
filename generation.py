@@ -6,7 +6,7 @@
 #
 # Arsitektur:
 #   - Retrieval  : retrieval.py (multi-query + filter Qdrant per dokumen)
-#   - Generation : model OLLAMA_GENERATION_MODEL (qwen2.5)
+#   - Generation : API model eksternal via webservice.py
 #   - Prompt     : RANKING_SYSTEM_PROMPT dari config.py
 # ============================================================
 
@@ -23,15 +23,14 @@ import os
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 from config import (
-    OLLAMA_BASE_URL, OLLAMA_GENERATION_MODEL,
     POLICY_PROMPT_TEMPLATE, PROMPT_TEMPLATE, RANKING_SYSTEM_PROMPT,
     QDRANT_COLLECTION, EMBED_MODEL_NAME, RERANKER_MODEL_NAME,
     RETRIEVAL_TOP_K, RERANK_TOP_N,
     LLM_PROVIDER, HF_GENERATION_MODEL, HF_TOKEN,
+    RUNPOD_MODEL_NAME,
     configure_utf8_stdio,
 )
 configure_utf8_stdio()
-from langchain_ollama import OllamaLLM
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -721,7 +720,7 @@ def render_header():
 
     info = Text()
     info.append("  ◈ LLM        ", style="dim")
-    info.append(f"{OLLAMA_GENERATION_MODEL}\n", style="bold green")
+    info.append(f"{RUNPOD_MODEL_NAME}\n", style="bold green")
     info.append("  ◈ Embedding  ", style="dim")
     info.append(f"{EMBED_MODEL_NAME}\n", style="green")
     info.append("  ◈ Reranker   ", style="dim")
@@ -777,7 +776,7 @@ class RAGGenerator:
 
     Retrieval : multi-query dengan filter Qdrant per dokumen program
                 → cegah chunk antar program tercampur
-    Generation: OLLAMA_GENERATION_MODEL (qwen2.5), temperature=0
+    Generation: API model eksternal via webservice.py
     Prompt    : RANKING_SYSTEM_PROMPT dari config.py
 
     Importable untuk webservice.py:
@@ -804,17 +803,10 @@ class RAGGenerator:
                 )
                 self.model_name = HF_GENERATION_MODEL
             else:
-                self.llm = OllamaLLM(
-                    base_url=OLLAMA_BASE_URL,
-                    model=OLLAMA_GENERATION_MODEL,   # qwen2.5 — bukan scoring model
-                    temperature=0.0,
-                    num_ctx=16384,
-                    stop=[
-                        "## Ringkasan Profil Warga\n##",
-                        "---\n\n## Ringkasan",
-                    ],
+                raise RuntimeError(
+                    "RAGGenerator CLI lokal tidak aktif. Gunakan webservice.py "
+                    "endpoint /recommend untuk generation via API RunPod."
                 )
-                self.model_name = OLLAMA_GENERATION_MODEL
                 
         console.print(
             f"[bold green]✅ Model siap.[/] [dim]({self.model_name}, "

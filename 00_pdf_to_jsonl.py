@@ -29,7 +29,6 @@ import urllib.error
 from config import (
     BASE_DIR, PDF_INPUT_DIR, CHUNKED_DIR,
     SURYA_BATCH_SIZE, OCR_CONFIDENCE_THRESHOLD,
-    OLLAMA_BASE_URL,
     ensure_dirs,
 )
 

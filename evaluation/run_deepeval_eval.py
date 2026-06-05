@@ -30,8 +30,14 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-# Import config di top-level agar HF_HOME aktif sebelum library AI lain
-from config import OLLAMA_BASE_URL, OLLAMA_GENERATION_MODEL  # noqa: E402
+# Import config di top-level agar env/cache aktif sebelum library AI lain
+from config import (  # noqa: E402
+    RUNPOD_API_KEY,
+    RUNPOD_MODEL_NAME,
+    RUNPOD_TEMPERATURE,
+    TIM1_GENERATION_API_URL,
+    TIM1_API_TIMEOUT_S,
+)
 
 
 GROUND_TRUTH_DEFAULT = Path(__file__).resolve().parent / "ground_truth_rag_cases.jsonl"
@@ -237,28 +243,28 @@ def load_deepeval_components():
     )
 
 
-def build_ollama_judge(
+def build_api_judge(
     DeepEvalBaseLLM: type,
     model_name: str,
-    base_url: str | None,
+    api_url: str,
+    api_key: str,
     json_mode: bool,
     temperature: float,
-    num_ctx: int,
 ):
-    class OllamaDeepEval(DeepEvalBaseLLM):
+    class ApiDeepEval(DeepEvalBaseLLM):
         def __init__(
             self,
             model_name: str,
-            base_url: str | None,
+            api_url: str,
+            api_key: str,
             json_mode: bool,
             temperature: float,
-            num_ctx: int,
         ):
             self.model_name = model_name
-            self.base_url = base_url
+            self.api_url = api_url
+            self.api_key = api_key
             self.json_mode = json_mode
             self.temperature = temperature
-            self.num_ctx = num_ctx
 
         def load_model(self) -> str:
             return self.model_name
@@ -277,46 +283,56 @@ def build_ollama_judge(
                 {"role": "user", "content": prompt},
             ]
 
-        def _chat_kwargs(self, prompt: str) -> dict[str, Any]:
-            kwargs: dict[str, Any] = {
+        def _payload(self, prompt: str) -> dict[str, Any]:
+            return {
                 "model": self.model_name,
                 "messages": self._messages(prompt),
-                "options": {
-                    "temperature": self.temperature,
-                    "num_ctx": self.num_ctx,
-                },
+                "temperature": self.temperature,
             }
-            if self.json_mode:
-                kwargs["format"] = "json"
-            return kwargs
+
+        def _headers(self) -> dict[str, str]:
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            return headers
+
+        @staticmethod
+        def _content(response_json: dict[str, Any]) -> str:
+            return response_json["choices"][0]["message"]["content"]
 
         def generate(self, prompt: str, *args: Any, **kwargs: Any) -> str:
-            import ollama
+            import httpx
 
-            client = ollama.Client(host=self.base_url) if self.base_url else ollama.Client()
-            response = client.chat(**self._chat_kwargs(prompt))
-            return response["message"]["content"]
+            with httpx.Client(timeout=TIM1_API_TIMEOUT_S) as client:
+                response = client.post(
+                    self.api_url,
+                    json=self._payload(prompt),
+                    headers=self._headers(),
+                )
+                response.raise_for_status()
+                return self._content(response.json())
 
         async def a_generate(self, prompt: str, *args: Any, **kwargs: Any) -> str:
-            import ollama
+            import httpx
 
-            client = (
-                ollama.AsyncClient(host=self.base_url)
-                if self.base_url
-                else ollama.AsyncClient()
-            )
-            response = await client.chat(**self._chat_kwargs(prompt))
-            return response["message"]["content"]
+            async with httpx.AsyncClient(timeout=TIM1_API_TIMEOUT_S) as client:
+                response = await client.post(
+                    self.api_url,
+                    json=self._payload(prompt),
+                    headers=self._headers(),
+                )
+                response.raise_for_status()
+                return self._content(response.json())
 
         def get_model_name(self) -> str:
             return self.model_name
 
-    return OllamaDeepEval(
+    return ApiDeepEval(
         model_name=model_name,
-        base_url=base_url,
+        api_url=api_url,
+        api_key=api_key,
         json_mode=json_mode,
         temperature=temperature,
-        num_ctx=num_ctx,
     )
 
 
@@ -387,14 +403,14 @@ def run_cases(args: argparse.Namespace, cases: list[dict[str, Any]]) -> tuple[li
 
     from generation import RAGGenerator
 
-    judge_name = args.judge_model or os.getenv("OLLAMA_JUDGE_MODEL") or OLLAMA_GENERATION_MODEL
-    judge_model = build_ollama_judge(
+    judge_name = args.judge_model or RUNPOD_MODEL_NAME
+    judge_model = build_api_judge(
         DeepEvalBaseLLM,
         judge_name,
-        args.ollama_base_url or OLLAMA_BASE_URL,
+        args.judge_api_url or TIM1_GENERATION_API_URL,
+        args.judge_api_key or RUNPOD_API_KEY,
         json_mode=not args.no_judge_json_mode,
         temperature=args.judge_temperature,
-        num_ctx=args.judge_num_ctx,
     )
     metrics = build_metrics(
         args,
@@ -497,19 +513,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Validate ground truth and exit.")
     parser.add_argument("--show-chunks", action="store_true", help="Show retrieved chunks from generation.py.")
     parser.add_argument("--no-scoring-result", action="store_true", help="Do not pass mock_tim1_output as scoring_result.")
-    parser.add_argument("--judge-model", help="Ollama model used as DeepEval judge.")
-    parser.add_argument("--ollama-base-url", help="Override Ollama base URL for judge calls.")
+    parser.add_argument("--judge-model", help="Model used as DeepEval judge.")
+    parser.add_argument("--judge-api-url", help="Override OpenAI-compatible judge API URL.")
+    parser.add_argument("--judge-api-key", help="Override judge API bearer token.")
     parser.add_argument(
         "--no-judge-json-mode",
         action="store_true",
-        help="Disable Ollama JSON mode for judge calls.",
+        help="Disable JSON-only system instruction for judge calls.",
     )
-    parser.add_argument("--judge-temperature", type=float, default=0.0)
-    parser.add_argument("--judge-num-ctx", type=int, default=16384)
+    parser.add_argument("--judge-temperature", type=float, default=RUNPOD_TEMPERATURE)
     parser.add_argument(
         "--async-metrics",
         action="store_true",
-        help="Enable DeepEval async metric calls. Faster, but less stable for local Ollama judges.",
+        help="Enable DeepEval async metric calls.",
     )
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument(

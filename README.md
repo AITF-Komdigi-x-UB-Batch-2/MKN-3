@@ -2,7 +2,7 @@
 
 Repository ini difokuskan ke jalur RAG biasa:
 
-Profil warga -> retrieval Qdrant -> reranking -> generation Ollama.
+Profil warga -> retrieval Qdrant -> generation API RunPod.
 
 Output rekomendasi dibatasi ke 6 program utama. RAG tidak lagi membuat bagian
 rekomendasi bantuan tambahan dari regulasi.
@@ -13,7 +13,7 @@ disimpan di `_archive/`.
 ## Jalur Utama
 
 ```text
-config.py                  # konfigurasi path, model, prompt, Qdrant, Ollama
+config.py                  # konfigurasi path, model, prompt, Qdrant, RunPod
 00_pdf_to_jsonl.py         # ekstraksi PDF regulasi dari pdf_input/
 00_juknis_to_jsonl.py      # ekstraksi 6 Juknis utama dari pdf_juknis/
 clean_jsonl.py             # normalisasi Juknis hasil ekstraksi
@@ -21,8 +21,8 @@ clean_jsonl.py             # normalisasi Juknis hasil ekstraksi
 02_EDA.py                  # EDA JSONL
 03_normalize_jsonl.py      # normalisasi teks regulasi
 04_embed_and_ingest_v2.py  # embedding dan ingest ke Qdrant
-retrieval.py               # semantic search + reranking
-generation.py              # RAG biasa / rekomendasi program
+retrieval.py               # semantic search
+generation.py              # helper prompt/context RAG
 webservice.py              # FastAPI untuk RAG
 evaluation/                # evaluasi RAG
 _archive/                  # file lama/Agentic yang tidak aktif
@@ -30,11 +30,8 @@ _archive/                  # file lama/Agentic yang tidak aktif
 
 ## Model
 
-- RAG biasa memakai `OLLAMA_GENERATION_MODEL`, default: `qwen2.5`.
-- `qwen-MKN1.gguf` disimpan sebagai referensi model scoring lama/Agentic dan tidak
-  dipakai jalur RAG biasa.
+- RAG biasa memakai API model Tim 1/RunPod via `TIM1_GENERATION_API_URL`.
 - Embedding default: `BAAI/bge-m3`.
-- Reranker default: `BAAI/bge-reranker-v2-m3`.
 
 ## Quick Start
 

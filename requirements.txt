@@ -50,7 +50,6 @@ kiwisolver==1.5.0
 langchain==1.2.15
 langchain-core==1.2.30
 langchain-huggingface==1.2.1
-langchain-ollama==1.1.0
 langchain-text-splitters==1.1.1
 langgraph==1.1.6
 langgraph-checkpoint==4.0.2
@@ -67,8 +66,8 @@ nest-asyncio==1.6.0
 networkx==3.6.1
 nodeenv==1.10.0
 numpy==2.4.4
-ollama==0.6.1
 onnxruntime==1.25.1
+ollama==0.6.1
 openai==2.32.0
 opencv-python==4.13.0.92
 opencv-python-headless==4.11.0.86

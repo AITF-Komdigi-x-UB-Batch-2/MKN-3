@@ -11,9 +11,9 @@ import argparse
 import json
 import numpy as np
 
-from qdrant_client import QdrantClient
+from qdrant_client import QdrantClient, models
 
-from config import QDRANT_URL, QDRANT_COLLECTION, EMBED_DIMENSIONS
+from config import QDRANT_URL, QDRANT_COLLECTION, EMBED_DIMENSIONS, EMBED_MODEL_NAME
 
 
 def get_client() -> QdrantClient:
@@ -97,7 +97,7 @@ def show_sample_vectors(client: QdrantClient, n: int = 5):
 # ── 3. Semantic Search via Embedding ──────────────────────────
 
 def search_by_query(client: QdrantClient, query: str, top_k: int = 3):
-    """Embed query via Ollama lalu cari di Qdrant."""
+    """Embed query dengan FastEmbed lalu cari di Qdrant."""
     print(f"\n{'=' * 60}")
     print(f"🔍 SEMANTIC SEARCH")
     print(f"{'=' * 60}")
@@ -105,24 +105,18 @@ def search_by_query(client: QdrantClient, query: str, top_k: int = 3):
     print(f"   Top-K  : {top_k}")
 
     try:
-        import ollama
-        from config import EMBED_MODEL_NAME
-        print(f"   Model  : {EMBED_MODEL_NAME} (via Ollama)\n")
-        response = ollama.embeddings(model=EMBED_MODEL_NAME, prompt=query)
-        query_vector = response["embedding"]
+        client.set_model(EMBED_MODEL_NAME)
+        vector_name = list(client.get_fastembed_vector_params().keys())[0]
+        print(f"   Model  : {EMBED_MODEL_NAME} (FastEmbed)\n")
     except Exception as e:
-        print(f"❌ Gagal embed query: {e}")
-        print("   Pastikan Ollama service berjalan: ollama serve")
+        print(f"❌ Gagal menyiapkan embedding model: {e}")
         return
-
-    print(f"   Query vector dim: {len(query_vector)}")
-    qv = np.array(query_vector)
-    print(f"   Query vector norm: {np.linalg.norm(qv):.4f}")
 
     try:
         hits = client.query_points(
             collection_name=QDRANT_COLLECTION,
-            query=query_vector,
+            query=models.Document(text=query, model=EMBED_MODEL_NAME),
+            using=vector_name,
             limit=top_k,
             with_payload=True,
         ).points
@@ -196,7 +190,7 @@ Contoh penggunaan:
     )
     parser.add_argument("--vectors", action="store_true", help="Tampilkan sample vectors")
     parser.add_argument("--n", type=int, default=5, help="Jumlah sample vectors (default: 5)")
-    parser.add_argument("--search", type=str, help="Query untuk semantic search via Ollama")
+    parser.add_argument("--search", type=str, help="Query untuk semantic search")
     parser.add_argument("--export", action="store_true", help="Export vectors ke JSON")
     parser.add_argument("--export-limit", type=int, default=50, help="Jumlah maks export (default: 50)")
     parser.add_argument("--url", type=str, default=QDRANT_URL, help=f"Qdrant URL (default: {QDRANT_URL})")
