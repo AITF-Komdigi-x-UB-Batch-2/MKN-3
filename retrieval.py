@@ -127,9 +127,12 @@ class PolicyRetriever:
 
         # ── Semantic search ──────────────────────────────────
         logger.debug("🔎 Semantic-only search limit=%d ...", top_k)
+        embedder_model = self.client._model_embedder.embedder.get_or_init_model(config.EMBED_MODEL_NAME)
+        query_vector = list(embedder_model.embed([query]))[0].tolist()
+
         hits = self.client.query_points(
             collection_name=self.collection,
-            query=models.Document(text=query, model=config.EMBED_MODEL_NAME),
+            query=query_vector,
             using=self.vector_name,
             limit=top_k,
             query_filter=qdrant_filter,
@@ -148,6 +151,7 @@ class PolicyRetriever:
             results.append(RetrievalResult(
                 text=text,
                 metadata=metadata,
+                score=float(h.score),
                 embed_score=float(h.score),
             ))
         logger.info(
@@ -155,3 +159,29 @@ class PolicyRetriever:
             len(results), results[0].score if results else 0.0
         )
         return results
+
+
+if __name__ == "__main__":
+    # Setup logging agar log dari PolicyRetriever muncul di console
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s"
+    )
+    
+    print("🚀 Menjalankan uji coba retrieval secara langsung...")
+    try:
+        retriever = PolicyRetriever()
+        
+        # Jalankan tes query
+        test_query = "Kriteria lansia penerima bantuan sosial PKH Plus"
+        print(f"\n🔍 Melakukan retrieve untuk query: '{test_query}'")
+        
+        results = retriever.retrieve(test_query, top_k=3)
+        
+        print(f"\n📊 Hasil Pencarian ({len(results)} chunks):")
+        for idx, r in enumerate(results, 1):
+            print(f"\n[{idx}] Skor: {r.score:.4f} | Sumber: {r.metadata.get('sumber', 'Unknown')} (Hal. {r.metadata.get('page_number', '?')})")
+            print(f"    Teks: {r.text[:250].replace(chr(10), ' ').strip()}...")
+            
+    except Exception as e:
+        print(f"❌ Terjadi kesalahan: {e}")
