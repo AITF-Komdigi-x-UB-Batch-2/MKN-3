@@ -179,7 +179,21 @@ async def lifespan(app: FastAPI):
         
         state.ready = True
         state.startup_time = round(time.time() - t0, 2)
-        logger.info("✅ Retrieval siap dalam %.2fs. Generation memakai API RunPod.", state.startup_time)
+        
+        # Dapatkan IP publik secara opsional untuk visualisasi akses eksternal di VPS
+        vps_ip = "0.0.0.0"
+        try:
+            with httpx.Client(timeout=2.0) as client:
+                resp = client.get("https://api.ipify.org")
+                if resp.status_code == 200:
+                    vps_ip = resp.text.strip()
+        except Exception:
+            pass
+
+        if vps_ip != "0.0.0.0":
+            logger.info("✅ Retrieval siap dalam %.2fs. Service dapat diakses secara eksternal di: http://%s:8000", state.startup_time, vps_ip)
+        else:
+            logger.info("✅ Retrieval siap dalam %.2fs. Generation memakai API RunPod.", state.startup_time)
     except Exception as e:
         state.ready = False
         state.startup_error = str(e)
