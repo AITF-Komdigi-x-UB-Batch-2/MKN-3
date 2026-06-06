@@ -14,7 +14,6 @@ class RecommendRequest(BaseModel):
         "json_schema_extra": {
             "example": {
                 "profil_warga": "Profil Warga:\n- NIK: PRS_d958ca14a8a0ffb...\n- Umur: 72 tahun\n- Desil Nasional: 2\n- Status DTSEN: DTSEN AKTIF\n- Wilayah: Kabupaten Malang, Jawa Timur\n\nTolong buatkan laporan evaluasi kelayakan untuk program PKH Plus dan ASPD.",
-                "scoring_result": "",
                 "top_k": 5,
             }
         }
@@ -37,10 +36,6 @@ class RecommendRequest(BaseModel):
             "Format chat JSONL dari Tim 4. Jika profil_warga/content kosong, "
             "message role user dipakai sebagai profil."
         )
-    )
-    scoring_result: Optional[str] = Field(
-        default="",
-        description="Hasil scoring MKN1 (opsional). Sertakan desil dan skor dari sistem MKN1."
     )
     top_k: Optional[int] = Field(default=None, ge=5, le=100, description=f"Kandidat awal semantic search (default: {RETRIEVAL_TOP_K})")
     top_n: Optional[int] = Field(default=None, ge=1, le=20, description=f"Finalis semantic search (default: {RERANK_TOP_N})")

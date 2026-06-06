@@ -334,7 +334,7 @@ def health():
 @app.get("/programs", response_model=list[ProgramInfo], tags=["System"],
          summary="Daftar program bantuan sosial dalam knowledge base")
 def list_programs():
-    """Kembalikan daftar 6 program bantuan sosial yang tersedia."""
+    """Kembalikan daftar program bantuan sosial yang tersedia."""
     return [
         ProgramInfo(filename=f, nama_program=n)
         for f, n in PROGRAM_LABELS.items()
@@ -348,9 +348,6 @@ def recommend(req: RecommendRequest):
     **Mode 1: Profil Warga → Ranking Program Bantuan (JSON Terstruktur)**
 
     Input profil warga → retrieve juknis relevan → LLM evaluasi eligibilitas → return JSON ranking.
-
-    Field `scoring_result` opsional: isi dengan output MKN1 (skor 0-100, desil 1-10)
-    untuk rekomendasi yang lebih presisi.
 
     **Response mencakup:**
     - `rekomendasi[]` — ranking program ELIGIBLE/MUNGKIN_ELIGIBLE + spesifikasi lengkap
@@ -398,30 +395,17 @@ def recommend(req: RecommendRequest):
 
         context = build_context_grouped(results)
 
-        scoring_result = req.scoring_result or ""
-        if not scoring_result:
-            try:
-                scoring_result = call_classification_api(req.profil_warga)
-                logger.info("✅ Klasifikasi Tim 1 diterima (%d chars).", len(scoring_result))
-            except Exception as e:
-                logger.warning("⚠️ Klasifikasi Tim 1 gagal, lanjut tanpa scoring_result: %s", e)
-
         profil_section = f"=== PROFIL WARGA ===\n{req.profil_warga}"
-        if scoring_result:
-            profil_section += f"\n\n=== HASIL SCORING MKN1 ===\n{scoring_result}"
 
         user_prompt = (
             "=== PROFIL WARGA DARI TIM 4 (ACUAN UTAMA) ===\n"
             f"{req.profil_warga}\n"
             "=== AKHIR PROFIL WARGA ===\n\n"
-            "=== HASIL KLASIFIKASI / SCORING TIM 1 ===\n"
-            f"{scoring_result or 'Tidak tersedia. Gunakan profil warga dan konteks dokumen.'}\n"
-            "=== AKHIR HASIL TIM 1 ===\n\n"
             "=== KONTEKS DOKUMEN KEBIJAKAN DARI RETRIEVAL ===\n"
             f"{context}\n"
             "=== AKHIR KONTEKS DOKUMEN ===\n\n"
             "INSTRUKSI EKSEKUSI:\n"
-            "1. Isi JSON dengan data konkret dari profil warga, hasil Tim 1, dan konteks dokumen.\n"
+            "1. Isi JSON dengan data konkret dari profil warga dan konteks dokumen.\n"
             "2. Jika warga lansia 70+ dan desil/DTSEN memenuhi, prioritaskan evaluasi PKH Plus.\n"
             "3. Jika umur warga kurang dari 70 tahun, PKH Plus wajib TIDAK_ELIGIBLE.\n"
             "4. Jika warga memiliki hambatan fungsi/disabilitas dan usia memenuhi, evaluasi ASPD.\n"
@@ -440,13 +424,13 @@ def recommend(req: RecommendRequest):
                 "⚠️ Generation API gagal menghasilkan JSON valid, fallback deterministic dipakai: %s",
                 e.detail,
             )
-            parsed = build_fallback_generation(req.profil_warga, scoring_result, results)
+            parsed = build_fallback_generation(req.profil_warga, results)
         except Exception as e:
             logger.warning(
                 "⚠️ Generation API Tim 1/RunPod gagal, fallback deterministic dipakai: %s",
                 e,
             )
-            parsed = build_fallback_generation(req.profil_warga, scoring_result, results)
+            parsed = build_fallback_generation(req.profil_warga, results)
         raise_if_parse_error(parsed)
         parsed = enforce_program_eligibility_rules(parsed, req.profil_warga)
 

@@ -100,16 +100,15 @@ def enforce_program_eligibility_rules(parsed: dict, profil_warga: str) -> dict:
 
 def build_fallback_generation(
     profil_warga: str,
-    scoring_result: str,
     results: list[RetrievalResult],
 ) -> dict:
-    tim1 = normalize_tim1_output(scoring_result)
-    laporan = tim1.get("laporan_evaluasi") if isinstance(tim1.get("laporan_evaluasi"), dict) else {}
-    profil = laporan.get("profil_warga") if isinstance(laporan.get("profil_warga"), dict) else {}
-    analisis = laporan.get("analisis") if isinstance(laporan.get("analisis"), dict) else {}
-    parameter = tim1.get("parameter") if isinstance(tim1.get("parameter"), dict) else {}
-    kesimpulan = tim1.get("kesimpulan") if isinstance(tim1.get("kesimpulan"), dict) else {}
-    skor = tim1.get("skor") if isinstance(tim1.get("skor"), dict) else {}
+    tim1 = {}
+    laporan = {}
+    profil = {}
+    analisis = {}
+    parameter = {}
+    kesimpulan = {}
+    skor = {}
     profile_signals = parse_profile_signals(profil_warga)
 
     umur = profil.get("umur") or profile_signals.get("umur")
