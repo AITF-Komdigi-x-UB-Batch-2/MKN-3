@@ -45,7 +45,6 @@ def _parse_content_to_retrieval_query(content: str) -> str:
         laporan    = data.get("laporan_evaluasi") or {}
         profil_raw = laporan.get("profil_warga") or {}
         param_raw  = data.get("parameter") or {}
-        skor_raw   = data.get("skor") or {}
         analisis   = laporan.get("analisis") or {}
 
         # ── Usia ──────────────────────────────────────────────
@@ -95,29 +94,10 @@ def _parse_content_to_retrieval_query(content: str) -> str:
         if re.search(r'\bperempuan\b|\bistri\b|\bibu\b', f"{nama} {hub}"):
             parts.append("perempuan")
 
-        # ── Skor Prioritas Program ─────────────────────────────
-        skor_pkh  = skor_raw.get("skor_pkh_plus")
-        skor_aspd = skor_raw.get("skor_aspd")
-        eligible_programs: list[str] = []
-        if skor_pkh is not None and float(skor_pkh) > 0.3:
-            eligible_programs.append("PKH Plus")
-        if skor_aspd is not None and float(skor_aspd) > 0.3:
-            eligible_programs.append("ASPD")
-        if eligible_programs:
-            parts.append(f"prioritas program: {', '.join(eligible_programs)}")
-
         # ── Lokasi ─────────────────────────────────────────────
         lokasi = param_raw.get("lokasi") or data.get("lokasi")
         if lokasi:
             parts.append(str(lokasi).strip()[:80])
-
-        # ── Usaha / Wirausaha ──────────────────────────────────
-        usaha_obj = param_raw.get("usaha") or data.get("usaha") or {}
-        jenis_usaha = usaha_obj.get("jenis_usaha") if isinstance(usaha_obj, dict) else None
-        if jenis_usaha:
-            parts.append("memiliki usaha")
-
-        logger.info("🔑 JSON parse berhasil: %d komponen query diekstrak.", len(parts))
 
     except (json.JSONDecodeError, TypeError, AttributeError):
         # ── [Bug 2 Fallback] Bukan JSON → jalankan logika Regex lama ─────
@@ -153,23 +133,6 @@ def _parse_content_to_retrieval_query(content: str) -> str:
         if re.search(r'\bperempuan\b|\bistri\b|\bibu\b', content, re.IGNORECASE):
             parts.append("perempuan")
 
-        # ── Skor Prioritas Program ─────────────────────────────────
-        # Format: "Skor PKH Plus    : 0.7045 (prioritas tinggi)"
-        skor_matches = re.findall(
-            r'skor\s+([\w\s+]+?)\s*[:\-]\s*([0-9.]+)',
-            content, re.IGNORECASE
-        )
-        eligible_programs: list[str] = []
-        for program_name, skor_str in skor_matches:
-            try:
-                skor = float(skor_str)
-                if skor > 0.3:
-                    eligible_programs.append(program_name.strip())
-            except ValueError:
-                pass
-        if eligible_programs:
-            parts.append(f"prioritas program: {', '.join(eligible_programs)}")
-
         # ── Lokasi ─────────────────────────────────────────────────
         lokasi_match = re.search(
             r'(?:kec\.?|kecamatan|kelurahan|kabupaten|kota)\s+[\w\s,]+',
@@ -177,11 +140,6 @@ def _parse_content_to_retrieval_query(content: str) -> str:
         )
         if lokasi_match:
             parts.append(lokasi_match.group(0).strip()[:80])
-
-        # ── Usaha / Wirausaha ──────────────────────────────────────
-        USAHA_KW = ["jenis usaha", "wirausaha", "berdagang", "omset usaha"]
-        if any(kw in content.lower() for kw in USAHA_KW):
-            parts.append("memiliki usaha")
 
     # ── Fallback universal: tidak ada yang terdeteksi ──────────────────
     if not parts:
@@ -213,12 +171,6 @@ def parse_profile_signals(profil_warga: str) -> dict:
         age = number(r"(\d+)\s*tahun", int)
 
     desil = number(r"desil\s*(?:nasional)?\s*[:\-]?\s*(\d+)", int)
-    skor_pkh = number(r"skor\s+pkh\s*plus\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)", float)
-    if skor_pkh is None:
-        skor_pkh = number(r"pkh\+\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)", float)
-    skor_aspd = number(r"skor\s+aspd\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)", float)
-    if skor_aspd is None:
-        skor_aspd = number(r"aspd\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)", float)
 
     status_dtsen = None
     status_match = re.search(r"status\s+dtsen\s*[:\-]?\s*([^\n]+)", text, re.IGNORECASE)
@@ -248,8 +200,6 @@ def parse_profile_signals(profil_warga: str) -> dict:
         "desil_nasional": desil,
         "status_dtsen": status_dtsen,
         "lokasi": lokasi,
-        "skor_pkh_plus": skor_pkh,
-        "skor_aspd": skor_aspd,
         "has_disability": has_disability,
     }
 
@@ -258,27 +208,21 @@ def infer_retrieval_sources_from_profile(content: str) -> Optional[list[str]]:
     signals = parse_profile_signals(content)
     age = signals.get("umur")
     desil = signals.get("desil_nasional")
-    skor_pkh = signals.get("skor_pkh_plus")
-    skor_aspd = signals.get("skor_aspd")
     has_disability = bool(signals.get("has_disability"))
 
     target_sources: list[str] = []
-
-    pkh_score_positive = skor_pkh is not None and float(skor_pkh) > 0.3
-    aspd_score_positive = skor_aspd is not None and float(skor_aspd) > 0.3
 
     pkh_profile_match = (
         age is not None
         and age >= 70
         and (desil is None or int(desil) <= 4)
-        and (skor_pkh is None or float(skor_pkh) > 0.05)
     )
-    aspd_profile_match = has_disability and (skor_aspd is None or float(skor_aspd) > 0.05)
+    aspd_profile_match = has_disability
 
-    if aspd_score_positive or aspd_profile_match:
+    if aspd_profile_match:
         target_sources.append("Juklak ASPD Tahun 202620260225_12303533_01.pdf")
 
-    if pkh_score_positive or pkh_profile_match:
+    if pkh_profile_match:
         target_sources.append("JUKNIS PKH PLUS 2026.pdf")
 
     return target_sources or None
@@ -347,7 +291,7 @@ def normalize_tim1_output(raw: str) -> dict:
     data = parsed.copy()
     laporan = data.get("laporan_evaluasi")
     if isinstance(laporan, dict):
-        for key in ["parameter", "skor", "kesimpulan"]:
+        for key in ["parameter", "kesimpulan"]:
             if key not in data and key in laporan:
                 data[key] = laporan[key]
     return data
