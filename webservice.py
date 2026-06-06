@@ -103,7 +103,7 @@ JSON_RANKING_SYSTEM_PROMPT = """Anda adalah AI Auditor resmi Dinas Sosial Provin
     Anda WAJIB merespons HANYA dengan JSON valid tanpa markdown dan tanpa teks pembuka/penutup.
     Gunakan key berikut persis:
     - ringkasan_profil: string konkret berisi umur, desil, DTSEN/DTKS, disabilitas/usia lansia, dan kondisi kunci warga.
-    - rekomendasi: array program yang ELIGIBLE. Setiap item wajib berisi rank, nama_program, status, dasar_hukum, alasan_kelayakan, spesifikasi.
+    - rekomendasi: array program yang ELIGIBLE. Setiap item wajib berisi rank, nama_program, status, sumber, alasan_kelayakan, spesifikasi.
     - spesifikasi: object berisi nominal_bantuan, frekuensi, sasaran, syarat_dokumen, mekanisme.
     - program_tidak_sesuai: array program TIDAK_ELIGIBLE. Setiap item wajib berisi nama_program, status, alasan.
     
@@ -283,43 +283,7 @@ def retrieve_semantic_only(
     return results[:top_n]
 
 
-def call_generation_api_checked(messages: list[dict]) -> dict:
-    parsed = call_generation_api(messages)
-    if not is_placeholder_generation(parsed):
-        return parsed
 
-    retry_messages = messages + [
-        {
-            "role": "user",
-            "content": (
-                "Output sebelumnya ditolak karena mengulang prompt atau menyalin placeholder schema. "
-                "Jawab ulang HANYA dengan JSON final. Isi semua field dengan nilai konkret berdasarkan "
-                "profil warga, hasil Tim 1, dan konteks dokumen. Jangan menulis ulang instruksi, "
-                "jangan memakai markdown, dan jangan memakai placeholder."
-            ),
-        }
-    ]
-    parsed_retry = call_generation_api(retry_messages)
-    if is_placeholder_generation(parsed_retry):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error": "Model generation masih menyalin placeholder schema setelah retry.",
-                "output_preview": json.dumps(parsed_retry, ensure_ascii=False)[:700],
-            },
-        )
-    return parsed_retry
-
-
-def raise_if_parse_error(parsed: dict):
-    if parsed.get("_parse_error"):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "error": "LLM tidak menghasilkan JSON valid. Coba ulangi request.",
-                "raw_output_preview": parsed.get("_raw", "")[:500],
-            }
-        )
 
 
 
@@ -383,10 +347,7 @@ def recommend(req: RecommendRequest):
     t0 = time.time()
 
     try:
-        # [Bug 3 Fix] top_k dinaikkan ke minimal 40 agar semua 6 program
-        # terwakili dalam pool semantic search, terutama dokumen ASPD dan KIP JAWARA
-        # yang kadang kalah saing dengan PKH Plus di embedding score.
-        top_k = max(req.top_k or RETRIEVAL_TOP_K, 40)
+        top_k = req.top_k or RETRIEVAL_TOP_K
         top_n = req.top_n or RERANK_TOP_N
 
         # [Bug 1 Fix] Gunakan _parse_content_to_retrieval_query() atas
@@ -483,7 +444,7 @@ def recommend(req: RecommendRequest):
                 rank=item.get("rank", i + 1),
                 nama_program=item.get("nama_program", ""),
                 status=item.get("status", ""),
-                dasar_hukum=item.get("dasar_hukum"),
+                sumber=item.get("sumber") or item.get("dasar_hukum"),
                 alasan_kelayakan=item.get("alasan_kelayakan"),
                 spesifikasi=normalize_spesifikasi(item.get("spesifikasi")),
             )

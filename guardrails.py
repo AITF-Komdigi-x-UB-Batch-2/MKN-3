@@ -211,7 +211,7 @@ def build_fallback_generation(
                 "rank": rank,
                 "nama_program": program_name,
                 "status": "ELIGIBLE",
-                "dasar_hukum": source_ref_for_program(results, source),
+                "sumber": source_ref_for_program(results, source),
                 "alasan_kelayakan": alasan,
                 "spesifikasi": spec,
             })

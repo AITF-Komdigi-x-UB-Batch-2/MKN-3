@@ -45,37 +45,19 @@ from retrieval import PolicyRetriever, RetrievalResult
 PROGRAM_LABELS = {
     "Juklak ASPD Tahun 202620260225_12303533_01.pdf":
         "Asistensi Sosial Penyandang Disabilitas (ASPD)",
-    "JUKNIS KEMISKINAN EKSTREM (13-1-2025)-1 (1) (2).pdf":
-        "Penanganan Kemiskinan Ekstrem",
     "JUKNIS PKH PLUS 2026.pdf":
         "PKH Plus (Lanjut Usia 70+)",
-    "PETUNJUK TEKNIS KIP KPM JAWARA.pdf":
-        "KIP KPM JAWARA (Kewirausahaan KPM)",
-    "Petunjuk Teknis KIP PPKS Jawara 2026.pdf":
-        "KIP PPKS JAWARA (Penyandang Masalah Sosial)",
-    "PETUNJUK TEKNIS KIP PUTRI JAWARA.pdf":
-        "KIP Putri JAWARA (Perempuan Tangguh)",
 }
 
 # Filter retrieval per program — cegah chunk antar program tercampur
 PROGRAM_FILE_MAP = {
     "ASPD":      ["Juklak ASPD Tahun 202620260225_12303533_01.pdf"],
-    "Ekstrem":   ["JUKNIS KEMISKINAN EKSTREM (13-1-2025)-1 (1) (2).pdf"],
     "PKH Plus":  ["JUKNIS PKH PLUS 2026.pdf"],
-    "KIP Jawara": [
-        "PETUNJUK TEKNIS KIP KPM JAWARA.pdf",
-        "Petunjuk Teknis KIP PPKS Jawara 2026.pdf",
-        "PETUNJUK TEKNIS KIP PUTRI JAWARA.pdf",
-    ],
 }
 
 PROGRAM_DISPLAY_NAMES = {
     "ASPD": "Asistensi Sosial Penyandang Disabilitas (ASPD)",
-    "Kemiskinan Ekstrem": "Penanganan Kemiskinan Ekstrem",
     "PKH Plus": "PKH Plus (Lanjut Usia 70+)",
-    "KIP KPM Jawara": "KIP KPM JAWARA (Kewirausahaan KPM)",
-    "KIP PPKS Jawara": "KIP PPKS JAWARA (Penyandang Masalah Sosial)",
-    "KIP Putri Jawara": "KIP Putri JAWARA (Perempuan Tangguh)",
 }
 
 NOMINAL_SOURCE_PATH = Path(__file__).resolve().parent / "chunked_data" / "juknis_extracted_normalized.jsonl"
@@ -868,8 +850,7 @@ class RAGGenerator:
             q_filter = self._build_qdrant_filter([source])
             results = self.retriever.retrieve(
                 query,
-                top_k=20,
-                top_n=5,
+                top_k=RETRIEVAL_TOP_K,
                 query_filter=q_filter,
             )
             for r in results:
@@ -881,8 +862,7 @@ class RAGGenerator:
         # ── Retrieval nominal (tanpa filter — lintas program) ─
         results_nominal = self.retriever.retrieve(
             query_nominal,
-            top_k=20,
-            top_n=8,
+            top_k=RETRIEVAL_TOP_K,
             query_filter=self._build_qdrant_filter(list(PROGRAM_LABELS.keys())),
         )
         for r in results_nominal:

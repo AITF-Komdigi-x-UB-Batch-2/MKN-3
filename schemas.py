@@ -15,8 +15,7 @@ class RecommendRequest(BaseModel):
             "example": {
                 "profil_warga": "Profil Warga:\n- NIK: PRS_d958ca14a8a0ffb...\n- Umur: 72 tahun\n- Desil Nasional: 2\n- Status DTSEN: DTSEN AKTIF\n- Wilayah: Kabupaten Malang, Jawa Timur\n\nTolong buatkan laporan evaluasi kelayakan untuk program PKH Plus dan ASPD.",
                 "scoring_result": "",
-                "top_k": 40,
-                "top_n": 4
+                "top_k": 5,
             }
         }
     }
@@ -89,8 +88,7 @@ class RetrieveOnlyRequest(BaseModel):
             "example": {
                 "content": "Profil Warga:\n- NIK: PRS_d958ca14a8a0ffb...\n- Umur: 72 tahun\n- Desil Nasional: 2\n- Status DTSEN: DTSEN AKTIF\n- Wilayah: Kabupaten Malang, Jawa Timur\n\nTolong buatkan laporan evaluasi kelayakan untuk program PKH Plus dan ASPD.",
                 "filter_programs_only": True,
-                "top_k": 40,
-                "top_n": 4
+                "top_k": 5,
             }
         }
     }
@@ -176,7 +174,7 @@ class RekomendasiProgram(BaseModel):
     rank: int
     nama_program: str
     status: str   # ELIGIBLE | MUNGKIN_ELIGIBLE | TIDAK_ELIGIBLE
-    dasar_hukum: Optional[str] = None
+    sumber: Optional[str] = None
     alasan_kelayakan: Optional[str] = None
     spesifikasi: Optional[SpesifikasiProgram] = None
 
