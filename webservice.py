@@ -81,37 +81,7 @@ for noisy in ["httpx", "httpcore", "sentence_transformers", "transformers"]:
 # SYSTEM PROMPTS — Paksa LLM output JSON
 # ============================================================
 
-JSON_RANKING_SYSTEM_PROMPT = """Anda adalah AI Auditor resmi Dinas Sosial Provinsi Jawa Timur yang bertugas melakukan verifikasi dan validasi kelayakan penerima manfaat dua program bantuan sosial.
-    
-    Tugas Anda: Berdasarkan PROFIL WARGA dan KONTEKS PROGRAM BANTUAN yang disediakan, \
-    evaluasi kelayakan warga HANYA untuk 2 program utama berikut:
-    1. Asistensi Sosial Penyandang Disabilitas (ASPD)
-    2. PKH Plus (Lanjut Usia 70+)
-    
-    === INSTRUKSI PENTING ===
-    1. Evaluasi hanya 2 program utama di atas secara individual.
-    2. Tentukan status: "ELIGIBLE", atau "TIDAK_ELIGIBLE".
-    3. Ranking dari yang paling cocok ke yang paling tidak cocok.
-    4. Sertakan spesifikasi teknis: nominal bantuan, frekuensi, syarat dokumen, mekanisme.
-    5. Berikan reasoning yang jelas dan WAJIB mengutip sumber dokumen.
-    6. JANGAN merekomendasikan program di luar 2 program utama.
-    7. DILARANG menyebut Program Sembako, PKH reguler, BPNT, PBI Jaminan Kesehatan, Rutilahu, PIP, Jamkesda, atau bantuan tambahan lain.
-    8. Hard rule PKH Plus: hanya untuk lanjut usia 70 tahun ke atas. Jika umur warga kurang dari 70 tahun, PKH Plus WAJIB TIDAK_ELIGIBLE walaupun desil/DTSEN aktif atau ada hambatan fungsi.
-    9. Hambatan fungsi/disabilitas dievaluasi untuk ASPD, bukan alasan meloloskan PKH Plus.
-    
-    === FORMAT OUTPUT ===
-    Anda WAJIB merespons HANYA dengan JSON valid tanpa markdown dan tanpa teks pembuka/penutup.
-    Gunakan key berikut persis:
-    - ringkasan_profil: string konkret berisi umur, desil, DTSEN/DTKS, disabilitas/usia lansia, dan kondisi kunci warga.
-    - rekomendasi: array program yang ELIGIBLE. Setiap item wajib berisi rank, nama_program, status, sumber, alasan_kelayakan, spesifikasi.
-    - spesifikasi: object berisi nominal_bantuan, frekuensi, sasaran, syarat_dokumen, mekanisme.
-    - program_tidak_sesuai: array program TIDAK_ELIGIBLE. Setiap item wajib berisi nama_program, status, alasan.
-    
-    Larangan keras:
-    - Jangan menyalin placeholder seperti "Nama Program", "Rp X.XXX.XXX", "dst", "rangkuman singkat", atau "Penjelasan mengapa".
-    - Jangan mengosongkan alasan. Semua alasan harus merujuk kondisi warga dan kriteria dokumen.
-    - nama_program harus salah satu dari 2 program utama yang disebut di atas.
-"""
+JSON_RANKING_SYSTEM_PROMPT = "Anda adalah AI Auditor resmi Dinas Sosial Provinsi Jawa Timur yang bertugas melakukan verifikasi dan validasi kelayakan penerima manfaat dua program bantuan sosial.\n\nTugas Anda: Berdasarkan PROFIL WARGA dan KONTEKS PROGRAM BANTUAN yang disediakan, evaluasi kelayakan warga HANYA untuk 2 program utama berikut:\n1. Asistensi Sosial Penyandang Disabilitas (ASPD)\n2. PKH Plus (Lanjut Usia 70+)\n\n=== INSTRUKSI PENTING ===\n1. Evaluasi hanya 2 program utama di atas secara individual.\n2. Tentukan status: \"ELIGIBLE\" atau \"TIDAK_ELIGIBLE\".\n3. Ranking dari yang paling cocok ke yang paling tidak cocok.\n4. Berikan reasoning yang jelas dan WAJIB mengutip sumber dokumen resmi juknis.\n5. JANGAN merekomendasikan program bantuan di luar 2 program utama tersebut.\n6. DILARANG KERAS menyebut Program Sembako, PKH reguler, BPNT, PBI Jaminan Kesehatan, Rutilahu, PIP, Jamkesda, atau bantuan tambahan lainnya.\n\n=== FORMAT OUTPUT ===\nAnda WAJIB merespons HANYA dengan JSON valid tanpa markdown dan tanpa teks pembuka/penutup.\nGunakan key berikut dengan urutan persis:\n- ringkasan_profil: string konkret berisi umur, desil, status DTSEN, disabilitas/usia lansia, dan kondisi kunci warga.\n- rekomendasi: array program yang ELIGIBLE atau MUNGKIN_ELIGIBLE. Setiap item di dalamnya wajib berisi key: rank, nama_program, status, dasar_hukum, dan alasan_kelayakan.\n- rekomendasi_teknis_bansos: string narasi tunggal (paragraf utuh tanpa objek/poin berlapis) yang menjabarkan rencana aksi operasional, prioritas pemanfaatan dana, mekanisme pendampingan, pengelola bantuan, serta monitoring evaluasi warga di lapangan. Jika warga tidak berhak menerima program bantuan apa pun (array rekomendasi kosong), maka nilai key ini WAJIB disetel null secara kaku.\n- program_tidak_sesuai: array program yang TIDAK_ELIGIBLE. Setiap item di dalamnya wajib berisi key: nama_program, status, dan alasan.\n\nLarangan keras:\n- Jangan menyalin placeholder seperti \"Nama Program\", \"Rp X.XXX.XXX\", \"dst\", \"rangkuman singkat\", atau \"Penjelasan mengapa\".\n- Jangan mengosongkan alasan. Semua alasan harus merujuk kondisi riil warga dan kriteria dokumen.\n- nama_program harus ditulis persis salah satu dari 2 program utama yang disebut di atas."
 
 JSON_ASK_SYSTEM_PROMPT = """Anda adalah SIRA (Sistem Rekomender Intervensi & Kebijakan Program Sosial), \
 asisten pakar kebijakan sosial milik Tim 3 Universitas Brawijaya.
@@ -432,6 +402,7 @@ def recommend(req: RecommendRequest):
             )
             parsed = build_fallback_generation(req.profil_warga, results)
         raise_if_parse_error(parsed)
+        logger.info("DEBUG PARSED: %s", json.dumps(parsed, indent=2, ensure_ascii=False))
         parsed = enforce_program_eligibility_rules(parsed, req.profil_warga)
 
         elapsed_ms = int((time.time() - t0) * 1000)
@@ -444,7 +415,6 @@ def recommend(req: RecommendRequest):
                 status=item.get("status", ""),
                 sumber=item.get("sumber") or item.get("dasar_hukum"),
                 alasan_kelayakan=item.get("alasan_kelayakan"),
-                spesifikasi=normalize_spesifikasi(item.get("spesifikasi")),
             )
             for i, item in enumerate(parsed.get("rekomendasi", []))
         ]
@@ -458,9 +428,24 @@ def recommend(req: RecommendRequest):
             for item in parsed.get("program_tidak_sesuai", [])
         ]
 
+        rekomendasi_teknis = parsed.get("rekomendasi_teknis_bansos")
+        if isinstance(rekomendasi_teknis, dict):
+            parts = []
+            for k, v in rekomendasi_teknis.items():
+                k_clean = k.replace("_", " ").title()
+                if isinstance(v, list):
+                    v_str = ", ".join(v)
+                else:
+                    v_str = str(v)
+                parts.append(f"{k_clean}: {v_str}")
+            rekomendasi_teknis = "; ".join(parts)
+        elif rekomendasi_teknis is not None:
+            rekomendasi_teknis = str(rekomendasi_teknis).strip()
+
         return RecommendResponse(
             ringkasan_profil=parsed.get("ringkasan_profil", ""),
             rekomendasi=rekomendasi,
+            rekomendasi_teknis_bansos=rekomendasi_teknis,
             program_tidak_sesuai=tidak_sesuai,
             sources=to_source_docs(results),
             retrieval_count=len(results),
@@ -660,4 +645,3 @@ if __name__ == "__main__":
         reload=False,
         log_level="info",
     )
-    

@@ -175,7 +175,7 @@ def build_fallback_generation(
     rekomendasi = []
     tidak_sesuai = []
     rank = 1
-    for key, program_name, source, sintesis, score, spec in program_configs:
+    for key, program_name, source, sintesis, score, teknis in program_configs:
         kes = kesimpulan.get(key)
         inferred_layak = False
         if key == "pkh_plus":
@@ -212,7 +212,6 @@ def build_fallback_generation(
                 "status": "ELIGIBLE",
                 "sumber": source_ref_for_program(results, source),
                 "alasan_kelayakan": alasan,
-                "spesifikasi": spec,
             })
             rank += 1
         else:
@@ -230,8 +229,20 @@ def build_fallback_generation(
                 "alasan": "Tidak ada indikator profil dan hasil Tim 1 yang menunjukkan kecocokan utama untuk program ini.",
             })
 
+    rekomendasi_names = [r["nama_program"] for r in rekomendasi]
+    if rekomendasi_names:
+        rekomendasi_teknis_narasi = (
+            f"Rencana aksi operasional dan pendampingan di lapangan untuk program "
+            f"{', '.join(rekomendasi_names)}. Penyaluran bantuan akan dikoordinasikan "
+            f"oleh Dinas Sosial Provinsi Jawa Timur bersama pihak kelurahan/kecamatan setempat, "
+            f"serta dilakukan monitoring dan evaluasi berkala untuk memastikan bantuan tepat sasaran."
+        )
+    else:
+        rekomendasi_teknis_narasi = None
+
     return {
         "ringkasan_profil": ringkasan,
         "rekomendasi": rekomendasi,
+        "rekomendasi_teknis_bansos": rekomendasi_teknis_narasi,
         "program_tidak_sesuai": tidak_sesuai,
     }

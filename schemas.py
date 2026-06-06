@@ -171,7 +171,6 @@ class RekomendasiProgram(BaseModel):
     status: str   # ELIGIBLE | MUNGKIN_ELIGIBLE | TIDAK_ELIGIBLE
     sumber: Optional[str] = None
     alasan_kelayakan: Optional[str] = None
-    spesifikasi: Optional[SpesifikasiProgram] = None
 
 
 class ProgramTidakSesuai(BaseModel):
@@ -212,6 +211,7 @@ class RetrieveOnlyResponse(BaseModel):
 class RecommendResponse(BaseModel):
     ringkasan_profil: str
     rekomendasi: list[RekomendasiProgram]
+    rekomendasi_teknis_bansos: Optional[str] = None
     program_tidak_sesuai: list[ProgramTidakSesuai]
     # Metadata pipeline
     sources: list[SourceDocument]
