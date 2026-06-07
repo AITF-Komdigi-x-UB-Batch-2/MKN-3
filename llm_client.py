@@ -8,7 +8,7 @@ from fastapi import HTTPException
 # Custom config settings
 from config import (
     RUNPOD_API_KEY, RUNPOD_MODEL_NAME, RUNPOD_TEMPERATURE, RUNPOD_MAX_TOKENS,
-    TIM1_CLASSIFICATION_API_URL, TIM1_GENERATION_API_URL, TIM1_API_TIMEOUT_S
+    MKN1_GENERATION_ENDPOINT_MODEL, TIM1_API_TIMEOUT_S
 )
 
 logger = logging.getLogger(__name__)
@@ -100,13 +100,13 @@ def call_runpod_chat_api(api_url: str, messages: list[dict]) -> str:
 
 def call_classification_api(profil_warga: str) -> str:
     return call_runpod_chat_api(
-        TIM1_CLASSIFICATION_API_URL,
+        MKN1_GENERATION_ENDPOINT_MODEL,
         [{"role": "user", "content": profil_warga}],
     )
 
 
 def call_generation_api(messages: list[dict]) -> dict:
-    raw_content = call_runpod_chat_api(TIM1_GENERATION_API_URL, messages)
+    raw_content = call_runpod_chat_api(MKN1_GENERATION_ENDPOINT_MODEL, messages)
     return parse_llm_json(raw_content)
 
 

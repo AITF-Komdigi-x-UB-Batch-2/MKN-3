@@ -55,14 +55,14 @@ class RecommendRequest(BaseModel):
             if not isinstance(msg, dict):
                 continue
             if msg.get("role") == "user":
-                user_content = str(msg.get("content") or "").strip()
+                user_content = str(msg.get("content") or msg.get("query") or "").strip()
 
         if user_content:
             self.profil_warga = user_content
             return self
 
         raise ValueError(
-            "Isi salah satu: `profil_warga`, `content`, atau `messages` dengan message role `user`."
+            "Isi salah satu: `profil_warga`, `content`, atau `messages` dengan message role `user` yang memiliki content."
         )
 
 
@@ -81,7 +81,7 @@ class RetrieveOnlyRequest(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "query": "- NIK / No. KK     : PRS_d042e02a62905683082f73a210ec7c037ec1268f9442876ea48a264fda186bea / FAM_f4d5cdb8947bb34051be28581ec19375a613e0d5aae9525e433e9b764c858acb\n- Nama             : ******YAH\n- Umur             : 12 tahun\n- Hub. Kepala KK   : Anak\n- Status Kawin     : Belum kawin\n- Jml. Anggota KK  : 4 orang\n- Desil Nasional   : 1 | Status DTSEN: DTSEN AKTIF\n- Status Keberadaan: Ditemukan / Aktif\n- Bansos           : PKH, SEMBAKO\n- PBI Jaminan Kes  : Ya\n- Kondisi Gizi     : Tidak diketahui\n- Penyakit Menahun : Gagal ginjal\nHambatan Fungsi:\n- Penglihatan      : Tidak mengalami kesulitan | Pendengaran: Ya, banyak kesulitan dan membutuhkan bantuan\n- Berjalan/Tangga  : Ya, banyak kesulitan dan membutuhkan bantuan | Tangan/Jari: Ya, banyak kesulitan dan membutuhkan bantuan\n- Belajar/Intelek  : Ya, banyak kesulitan dan membutuhkan bantuan | Perilaku: Ya, banyak kesulitan dan membutuhkan bantuan\n- Bicara/Komunikasi: Ya, banyak kesulitan dan membutuhkan bantuan | Mengurus Diri: Ya, banyak kesulitan dan membutuhkan bantuan\n- Ingatan/Fokus    : Ya, banyak kesulitan dan membutuhkan bantuan | Sedih/Depresi: Ya, banyak kesulitan dan membutuhkan bantuan\n- Wilayah          : Polowijen, Kec. Blimbing, Kota Malang, Jawa Timur",
+                "content": "- NIK / No. KK     : PRS_d042e02a62905683082f73a210ec7c037ec1268f9442876ea48a264fda186bea / FAM_f4d5cdb8947bb34051be28581ec19375a613e0d5aae9525e433e9b764c858acb\n- Nama             : ******YAH\n- Umur             : 12 tahun\n- Hub. Kepala KK   : Anak\n- Status Kawin     : Belum kawin\n- Jml. Anggota KK  : 4 orang\n- Desil Nasional   : 1 | Status DTSEN: DTSEN AKTIF\n- Status Keberadaan: Ditemukan / Aktif\n- Bansos           : PKH, SEMBAKO\n- PBI Jaminan Kes  : Ya\n- Kondisi Gizi     : Tidak diketahui\n- Penyakit Menahun : Gagal ginjal\nHambatan Fungsi:\n- Penglihatan      : Tidak mengalami kesulitan | Pendengaran: Ya, banyak kesulitan dan membutuhkan bantuan\n- Berjalan/Tangga  : Ya, banyak kesulitan dan membutuhkan bantuan | Tangan/Jari: Ya, banyak kesulitan dan membutuhkan bantuan\n- Belajar/Intelek  : Ya, banyak kesulitan dan membutuhkan bantuan | Perilaku: Ya, banyak kesulitan dan membutuhkan bantuan\n- Bicara/Komunikasi: Ya, banyak kesulitan dan membutuhkan bantuan | Mengurus Diri: Ya, banyak kesulitan dan membutuhkan bantuan\n- Ingatan/Fokus    : Ya, banyak kesulitan dan membutuhkan bantuan | Sedih/Depresi: Ya, banyak kesulitan dan membutuhkan bantuan\n- Wilayah          : Polowijen, Kec. Blimbing, Kota Malang, Jawa Timur",
                 "filter_programs_only": True,
                 "top_k": 5,
             }
@@ -140,7 +140,7 @@ class RetrieveOnlyRequest(BaseModel):
             if not isinstance(msg, dict):
                 continue
             if msg.get("role") == "user":
-                user_content = str(msg.get("content") or "").strip()
+                user_content = str(msg.get("content") or msg.get("query") or "").strip()
                 if user_content:
                     break
 

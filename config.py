@@ -71,28 +71,14 @@ QDRANT_COLLECTION = 'juknis-juklak-mkn3'
 EMBED_MODEL_NAME = 'intfloat/multilingual-e5-large' # model bawaan fastembed dari qdrant
 EMBED_DIMENSIONS = int(os.getenv("EMBED_DIMENSIONS", "1024"))
 
-# --- Model untuk PRODUCTION (RTX 5090 VM / SentenceTransformer) ---
-# EMBED_MODEL_NAME  = "BAAI/bge-multilingual-gemma2"   # 3584 dimensi
-# EMBED_DIMENSIONS  = 3584
-
 EMBED_BATCH_SIZE = 1  # Batch size=1 untuk hemat VRAM
 UPLOAD_BATCH_SIZE = 100  # Jumlah dokumen per upload ke Qdrant
 
 # ============================================================
 # KONFIGURASI RETRIEVAL & RERANKING (Stage E)
 # ============================================================
-
-# --- Model untuk LOCAL DEVELOPMENT ---
-# RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL_NAME", "BAAI/bge-reranker-v2-m3")
-RERANKER_MODEL_NAME = os.getenv(
-    "RERANKER_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2"
-)
-
-# --- Model untuk PRODUCTION (RTX 5090 VM) ---
-# RERANKER_MODEL_NAME = "BAAI/bge-reranker-v2-gemma"
-
-RETRIEVAL_TOP_K = 5
-RERANK_TOP_N = 4
+RETRIEVAL_TOP_K = 5 # retrieval limit
+RERANK_TOP_N = RETRIEVAL_TOP_K # awalnya buat rerank, tapi ga jadi pake reranker
 
 # ============================================================
 # KONFIGURASI GENERATION / LLM (Stage F)
@@ -105,21 +91,17 @@ HF_GENERATION_MODEL = os.getenv("HF_GENERATION_MODEL", "")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 
 # ============================================================
-# KONFIGURASI API MODEL TIM 1 / RUNPOD
+# KONFIGURASI API MODEL TIM 1 / RUNPOD / MKN1
 # ============================================================
 # Ganti nilai default ini dengan endpoint RunPod asli saat integrasi.
-TIM1_CLASSIFICATION_API_URL = os.getenv(
-    "TIM1_CLASSIFICATION_API_URL",
+MKN1_GENERATION_ENDPOINT_MODEL = os.getenv(
+    "MKN1_GENERATION_ENDPOINT_MODEL",
     os.getenv(
-        "MODEL_ENDPOINT",
-        "https://api.runpod.ai/v2/j9gtpnswa09lnf/openai/v1/chat/completions",
-    ),
-)
-TIM1_GENERATION_API_URL = os.getenv(
-    "TIM1_GENERATION_API_URL",
-    os.getenv(
-        "MODEL_ENDPOINT",
-        "https://api.runpod.ai/v2/j9gtpnswa09lnf/openai/v1/chat/completions",
+        "TIM1_GENERATION_API_URL",
+        os.getenv(
+            "MODEL_ENDPOINT",
+            "",
+        ),
     ),
 )
 TIM1_API_TIMEOUT_S = float(os.getenv("TIM1_API_TIMEOUT_S", "120"))
@@ -185,7 +167,7 @@ POLICY_PROMPT_TEMPLATE = (
     "## Ringkasan Profil Warga"
 )
 
-RANKING_SYSTEM_PROMPT = "Anda adalah AI Auditor resmi Dinas Sosial Provinsi Jawa Timur yang bertugas melakukan verifikasi dan validasi kelayakan penerima manfaat dua program bantuan sosial.\n\nTugas Anda: Berdasarkan PROFIL WARGA dan KONTEKS PROGRAM BANTUAN yang disediakan, evaluasi kelayakan warga HANYA untuk 2 program utama berikut:\n1. Asistensi Sosial Penyandang Disabilitas (ASPD)\n2. PKH Plus (Lanjut Usia 70+)\n\n=== INSTRUKSI PENTING ===\n1. Evaluasi hanya 2 program utama di atas secara individual.\n2. Tentukan status: \"ELIGIBLE\" atau \"TIDAK_ELIGIBLE\".\n3. Ranking dari yang paling cocok ke yang paling tidak cocok.\n4. Berikan reasoning yang jelas dan WAJIB mengutip sumber dokumen resmi juknis.\n5. JANGAN merekomendasikan program bantuan di luar 2 program utama tersebut.\n6. DILARANG KERAS menyebut Program Sembako, PKH reguler, BPNT, PBI Jaminan Kesehatan, Rutilahu, PIP, Jamkesda, atau bantuan tambahan lainnya.\n\n=== FORMAT OUTPUT ===\nAnda WAJIB merespons HANYA dengan JSON valid tanpa markdown dan tanpa teks pembuka/penutup.\nGunakan key berikut dengan urutan persis:\n- ringkasan_profil: string konkret berisi umur, desil, status DTSEN, disabilitas/usia lansia, dan kondisi kunci warga.\n- rekomendasi: array program yang ELIGIBLE atau MUNGKIN_ELIGIBLE. Setiap item di dalamnya wajib berisi key: rank, nama_program, status, dasar_hukum, dan alasan_kelayakan.\n- rekomendasi teknis bansos: string narasi tunggal (paragraf utuh tanpa objek/poin berlapis) yang menjabarkan rencana aksi operasional, prioritas pemanfaatan dana, mekanisme pendampingan, pengelola bantuan, serta monitoring evaluasi warga di lapangan. Jika warga tidak berhak menerima program bantuan apa pun (array rekomendasi kosong), maka nilai key ini WAJIB disetel null secara kaku.\n- program_tidak_sesuai: array program yang TIDAK_ELIGIBLE. Setiap item di dalamnya wajib berisi key: nama_program, status, dan alasan.\n\nLarangan keras:\n- Jangan menyalin placeholder seperti \"Nama Program\", \"Rp X.XXX.XXX\", \"dst\", \"rangkuman singkat\", atau \"Penjelasan mengapa\".\n- Jangan mengosongkan alasan. Semua alasan harus merujuk kondisi riil warga dan kriteria dokumen.\n- nama_program harus ditulis persis salah satu dari 2 program utama yang disebut di atas.",
+SYSTEM_PROMPT = "Anda adalah AI Auditor resmi Dinas Sosial Provinsi Jawa Timur yang bertugas melakukan verifikasi dan validasi kelayakan penerima manfaat dua program bantuan sosial.\n\nTugas Anda: Berdasarkan PROFIL WARGA dan KONTEKS PROGRAM BANTUAN yang disediakan, evaluasi kelayakan warga HANYA untuk 2 program utama berikut:\n1. Asistensi Sosial Penyandang Disabilitas (ASPD)\n2. PKH Plus (Lanjut Usia 70+)\n\n=== INSTRUKSI PENTING ===\n1. Evaluasi hanya 2 program utama di atas secara individual.\n2. Tentukan status: \"ELIGIBLE\" atau \"TIDAK_ELIGIBLE\".\n3. Ranking dari yang paling cocok ke yang paling tidak cocok.\n4. Berikan reasoning yang jelas dan WAJIB mengutip sumber dokumen resmi juknis.\n5. JANGAN merekomendasikan program bantuan di luar 2 program utama tersebut.\n6. DILARANG KERAS menyebut Program Sembako, PKH reguler, BPNT, PBI Jaminan Kesehatan, Rutilahu, PIP, Jamkesda, atau bantuan tambahan lainnya.\n\n=== FORMAT OUTPUT ===\nAnda WAJIB merespons HANYA dengan JSON valid tanpa markdown dan tanpa teks pembuka/penutup.\nGunakan key berikut dengan urutan persis:\n- ringkasan_profil: string konkret berisi umur, desil, status DTSEN, disabilitas/usia lansia, dan kondisi kunci warga.\n- rekomendasi: array program yang ELIGIBLE atau MUNGKIN_ELIGIBLE. Setiap item di dalamnya wajib berisi key: rank, nama_program, status, dasar_hukum, dan alasan_kelayakan.\n- rekomendasi_teknis_bansos: string narasi tunggal (paragraf utuh tanpa objek/poin berlapis) yang menjabarkan rencana aksi operasional, prioritas pemanfaatan dana, mekanisme pendampingan, pengelola bantuan, serta monitoring evaluasi warga di lapangan. Jika warga tidak berhak menerima program bantuan apa pun (array rekomendasi kosong), maka nilai key ini WAJIB disetel null secara kaku.\n- program_tidak_sesuai: array program yang TIDAK_ELIGIBLE. Setiap item di dalamnya wajib berisi key: nama_program, status, dan alasan.\n\nLarangan keras:\n- Jangan menyalin placeholder seperti \"Nama Program\", \"Rp X.XXX.XXX\", \"dst\", \"rangkuman singkat\", atau \"Penjelasan mengapa\".\n- Jangan mengosongkan alasan. Semua alasan harus merujuk kondisi riil warga dan kriteria dokumen.\n- nama_program harus ditulis persis salah satu dari 2 program utama yang disebut di atas.",
 
 # ============================================================
 # KONFIGURASI PDF EXTRACTION (Stage 00 — Surya OCR)
@@ -248,11 +230,8 @@ if __name__ == "__main__":
     print(f"   UPLOAD_BATCH_SIZE   : {UPLOAD_BATCH_SIZE}")
     print(f"   QDRANT_COLLECTION   : {QDRANT_COLLECTION}")
     print(f"   QDRANT_URL          : {QDRANT_URL}")
-    print(f"   RERANKER_MODEL_NAME : {RERANKER_MODEL_NAME}")
     print(f"   RETRIEVAL_TOP_K     : {RETRIEVAL_TOP_K}")
-    print(f"   RERANK_TOP_N        : {RERANK_TOP_N}")
-    print(f"   TIM1_CLASSIFICATION_API_URL : {TIM1_CLASSIFICATION_API_URL}")
-    print(f"   TIM1_GENERATION_API_URL     : {TIM1_GENERATION_API_URL}")
+    print(f"   MKN1_GENERATION_ENDPOINT_MODEL : {MKN1_GENERATION_ENDPOINT_MODEL}")
     print(f"   RUNPOD_MODEL_NAME           : {RUNPOD_MODEL_NAME}")
     print(f"   RUNPOD_TEMPERATURE          : {RUNPOD_TEMPERATURE}")
     print(f"   RUNPOD_MAX_TOKENS           : {RUNPOD_MAX_TOKENS}")

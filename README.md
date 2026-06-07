@@ -30,7 +30,7 @@ _archive/                  # file lama/Agentic yang tidak aktif
 
 ## Model
 
-- RAG biasa memakai API model Tim 1/RunPod via `TIM1_GENERATION_API_URL`.
+- RAG biasa memakai API model Tim 1/RunPod via `MKN1_GENERATION_ENDPOINT_MODEL`.
 - Embedding default: `BAAI/bge-m3`.
 
 ## Quick Start

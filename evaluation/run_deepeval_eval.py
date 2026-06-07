@@ -35,7 +35,7 @@ from config import (  # noqa: E402
     RUNPOD_API_KEY,
     RUNPOD_MODEL_NAME,
     RUNPOD_TEMPERATURE,
-    TIM1_GENERATION_API_URL,
+    MKN1_GENERATION_ENDPOINT_MODEL,
     TIM1_API_TIMEOUT_S,
 )
 
@@ -407,7 +407,7 @@ def run_cases(args: argparse.Namespace, cases: list[dict[str, Any]]) -> tuple[li
     judge_model = build_api_judge(
         DeepEvalBaseLLM,
         judge_name,
-        args.judge_api_url or TIM1_GENERATION_API_URL,
+        args.judge_api_url or MKN1_GENERATION_ENDPOINT_MODEL,
         args.judge_api_key or RUNPOD_API_KEY,
         json_mode=not args.no_judge_json_mode,
         temperature=args.judge_temperature,

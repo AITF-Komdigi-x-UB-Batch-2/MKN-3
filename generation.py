@@ -23,8 +23,8 @@ import os
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 from config import (
-    POLICY_PROMPT_TEMPLATE, PROMPT_TEMPLATE, RANKING_SYSTEM_PROMPT,
-    QDRANT_COLLECTION, EMBED_MODEL_NAME, RERANKER_MODEL_NAME,
+    POLICY_PROMPT_TEMPLATE, PROMPT_TEMPLATE, SYSTEM_PROMPT,
+    QDRANT_COLLECTION, EMBED_MODEL_NAME,
     RETRIEVAL_TOP_K, RERANK_TOP_N,
     LLM_PROVIDER, HF_GENERATION_MODEL, HF_TOKEN,
     RUNPOD_MODEL_NAME,
@@ -705,8 +705,6 @@ def render_header():
     info.append(f"{RUNPOD_MODEL_NAME}\n", style="bold green")
     info.append("  ◈ Embedding  ", style="dim")
     info.append(f"{EMBED_MODEL_NAME}\n", style="green")
-    info.append("  ◈ Reranker   ", style="dim")
-    info.append(f"{RERANKER_MODEL_NAME}\n", style="green")
     info.append("  ◈ Collection ", style="dim")
     info.append(f"{QDRANT_COLLECTION}", style="green")
     info.append(f"  │  Top-K={RETRIEVAL_TOP_K}  Top-N={RERANK_TOP_N}\n", style="dim")
@@ -925,13 +923,13 @@ class RAGGenerator:
         # ── Susun final prompt ────────────────────────────────
         if scoring_result.strip():
             final_prompt = POLICY_PROMPT_TEMPLATE.format(
-                system_prompt=RANKING_SYSTEM_PROMPT,
+                system_prompt=SYSTEM_PROMPT,
                 scoring_result=profil_section,
                 context=context,
             )
         else:
             final_prompt = PROMPT_TEMPLATE.format(
-                system_prompt=RANKING_SYSTEM_PROMPT,
+                system_prompt=SYSTEM_PROMPT,
                 context=context,
                 query=profil_section,
             )
