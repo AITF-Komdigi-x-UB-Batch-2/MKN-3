@@ -13,7 +13,7 @@ class RecommendRequest(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "profil_warga": "Profil Warga:\n- NIK: PRS_d958ca14a8a0ffb...\n- Umur: 72 tahun\n- Desil Nasional: 2\n- Status DTSEN: DTSEN AKTIF\n- Wilayah: Kabupaten Malang, Jawa Timur\n\nTolong buatkan laporan evaluasi kelayakan untuk program PKH Plus dan ASPD.",
+                "profil_warga": "- NIK / No. KK     : PRS_d042e02a62905683082f73a210ec7c037ec1268f9442876ea48a264fda186bea / FAM_f4d5cdb8947bb34051be28581ec19375a613e0d5aae9525e433e9b764c858acb\n- Nama             : ******YAH\n- Umur             : 12 tahun\n- Hub. Kepala KK   : Anak\n- Status Kawin     : Belum kawin\n- Jml. Anggota KK  : 4 orang\n- Desil Nasional   : 1 | Status DTSEN: DTSEN AKTIF\n- Status Keberadaan: Ditemukan / Aktif\n- Bansos           : PKH, SEMBAKO\n- PBI Jaminan Kes  : Ya\n- Kondisi Gizi     : Tidak diketahui\n- Penyakit Menahun : Gagal ginjal\nHambatan Fungsi:\n- Penglihatan      : Tidak mengalami kesulitan | Pendengaran: Ya, banyak kesulitan dan membutuhkan bantuan\n- Berjalan/Tangga  : Ya, banyak kesulitan dan membutuhkan bantuan | Tangan/Jari: Ya, banyak kesulitan dan membutuhkan bantuan\n- Belajar/Intelek  : Ya, banyak kesulitan dan membutuhkan bantuan | Perilaku: Ya, banyak kesulitan dan membutuhkan bantuan\n- Bicara/Komunikasi: Ya, banyak kesulitan dan membutuhkan bantuan | Mengurus Diri: Ya, banyak kesulitan dan membutuhkan bantuan\n- Ingatan/Fokus    : Ya, banyak kesulitan dan membutuhkan bantuan | Sedih/Depresi: Ya, banyak kesulitan dan membutuhkan bantuan\n- Wilayah          : Polowijen, Kec. Blimbing, Kota Malang, Jawa Timur",
                 "top_k": 5,
             }
         }
@@ -81,7 +81,7 @@ class RetrieveOnlyRequest(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "content": "Profil Warga:\n- NIK: PRS_d958ca14a8a0ffb...\n- Umur: 72 tahun\n- Desil Nasional: 2\n- Status DTSEN: DTSEN AKTIF\n- Wilayah: Kabupaten Malang, Jawa Timur\n\nTolong buatkan laporan evaluasi kelayakan untuk program PKH Plus dan ASPD.",
+                "query": "- NIK / No. KK     : PRS_d042e02a62905683082f73a210ec7c037ec1268f9442876ea48a264fda186bea / FAM_f4d5cdb8947bb34051be28581ec19375a613e0d5aae9525e433e9b764c858acb\n- Nama             : ******YAH\n- Umur             : 12 tahun\n- Hub. Kepala KK   : Anak\n- Status Kawin     : Belum kawin\n- Jml. Anggota KK  : 4 orang\n- Desil Nasional   : 1 | Status DTSEN: DTSEN AKTIF\n- Status Keberadaan: Ditemukan / Aktif\n- Bansos           : PKH, SEMBAKO\n- PBI Jaminan Kes  : Ya\n- Kondisi Gizi     : Tidak diketahui\n- Penyakit Menahun : Gagal ginjal\nHambatan Fungsi:\n- Penglihatan      : Tidak mengalami kesulitan | Pendengaran: Ya, banyak kesulitan dan membutuhkan bantuan\n- Berjalan/Tangga  : Ya, banyak kesulitan dan membutuhkan bantuan | Tangan/Jari: Ya, banyak kesulitan dan membutuhkan bantuan\n- Belajar/Intelek  : Ya, banyak kesulitan dan membutuhkan bantuan | Perilaku: Ya, banyak kesulitan dan membutuhkan bantuan\n- Bicara/Komunikasi: Ya, banyak kesulitan dan membutuhkan bantuan | Mengurus Diri: Ya, banyak kesulitan dan membutuhkan bantuan\n- Ingatan/Fokus    : Ya, banyak kesulitan dan membutuhkan bantuan | Sedih/Depresi: Ya, banyak kesulitan dan membutuhkan bantuan\n- Wilayah          : Polowijen, Kec. Blimbing, Kota Malang, Jawa Timur",
                 "filter_programs_only": True,
                 "top_k": 5,
             }

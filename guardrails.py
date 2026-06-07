@@ -44,12 +44,13 @@ def enforce_program_eligibility_rules(parsed: dict, profil_warga: str) -> dict:
     )
 
     rekomendasi: list[dict] = []
-    tidak_sesuai: list[dict] = [
-        item.copy() for item in tidak_sesuai_raw if isinstance(item, dict)
-    ]
+    tidak_sesuai: list[dict] = []
+    allowed_programs = set(PROGRAM_LABELS.values())
 
     def add_tidak_sesuai(program_name: str, alasan: str):
         canonical = normalize_program_name(program_name)
+        if canonical not in allowed_programs:
+            return
         for item in tidak_sesuai:
             if normalize_program_name(str(item.get("nama_program") or "")) == canonical:
                 item["nama_program"] = canonical
@@ -62,11 +63,27 @@ def enforce_program_eligibility_rules(parsed: dict, profil_warga: str) -> dict:
             "alasan": alasan,
         })
 
+    # Filter program_tidak_sesuai dari LLM agar hanya menyertakan program yang diizinkan
+    for item in tidak_sesuai_raw:
+        if not isinstance(item, dict):
+            continue
+        canonical = normalize_program_name(str(item.get("nama_program") or ""))
+        if canonical in allowed_programs:
+            tidak_sesuai.append({
+                "nama_program": canonical,
+                "status": "TIDAK_ELIGIBLE",
+                "alasan": item.get("alasan") or "Tidak memenuhi kriteria program.",
+            })
+
     for item in rekomendasi_raw:
         if not isinstance(item, dict):
             continue
         current = item.copy()
         canonical = normalize_program_name(str(current.get("nama_program") or ""))
+        
+        if canonical not in allowed_programs:
+            continue
+
         current["nama_program"] = canonical
 
         is_pkh_plus = canonical == "PKH Plus (Lanjut Usia 70+)"
