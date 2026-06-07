@@ -3,29 +3,16 @@
 # Social Welfare Policy Recommender System (Tim 3 Universitas Brawijaya)
 #
 # Endpoints:
-#   POST /recommend              → Profil warga → ranking program bantuan (JSON terstruktur)
+#   POST /recommend             → Profil warga → ranking program bantuan (JSON terstruktur)
 #   POST /ask                   → Tanya juknis bebas (JSON terstruktur)
 #   POST /retrieve              → Retrieval-only tanpa LLM generation
 #   GET  /health                → Status Qdrant + model
-#   GET  /programs              → Daftar 6 program bantuan
 #
 # Jalankan:
-#   uvicorn webservice:app --host 0.0.0.0 --port 8000 --reload
+#   uvicorn webservice:app --host 0.0.0.0 --port 8002 --reload
 #
 # Swagger UI:
-#   http://localhost:8000/docs
-#
-# Changelog v3:
-#   [Bug 1] Hapus pemotongan [:300] di query_for_retrieval pada endpoint
-#           /recommend; gunakan _parse_content_to_retrieval_query() untuk
-#           seluruh string profil.
-#   [Bug 2] _parse_content_to_retrieval_query: tambahkan safe JSON parsing
-#           di awal fungsi sebelum fallback ke Regex.
-#   [Bug 3] Pemfilteran PROGRAM_LABELS dipindahkan ke native Qdrant filter
-#           (FieldCondition/MatchAny) via parameter allowed_sources di
-#           retriever.retrieve(). top_k default dinaikkan ke min 40 agar
-#           semua 6 program terwakili di pool retrieval.
-#   [Bug 4] Seragamkan nama tim → "Tim 3 Universitas Brawijaya".
+#   http://localhost:8002/docs
 # ============================================================
 
 import os
@@ -35,10 +22,6 @@ import time
 import logging
 from contextlib import asynccontextmanager
 from typing import Optional
-
-os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-
-# PINDAHKAN KE ATAS: Agar HF_HOME di config aktif sebelum library AI lain di-import
 from config import (
     QDRANT_URL, QDRANT_COLLECTION,
     EMBED_MODEL_NAME,
@@ -48,6 +31,8 @@ from config import (
     RUNPOD_API_KEY, RUNPOD_MODEL_NAME, RUNPOD_TEMPERATURE, RUNPOD_MAX_TOKENS,
     configure_utf8_stdio,
 )
+
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 configure_utf8_stdio()
 
 import httpx
@@ -111,10 +96,6 @@ RETRIEVE_SYSTEM_PROMPT = (
     "dan mekanisme pencairan untuk program PKH Plus (lanjut usia 70 tahun ke atas) "
     "dan ASPD (penyandang disabilitas) berdasarkan petunjuk teknis resmi."
 )
-# Anda bisa mengganti isi RETRIEVE_SYSTEM_PROMPT di atas sesuai kebutuhan.
-# Contoh alternatif:
-#   RETRIEVE_SYSTEM_PROMPT = "Cari aturan desil kemiskinan dan syarat DTKS untuk bantuan sosial Jawa Timur"
-#   RETRIEVE_SYSTEM_PROMPT = "Temukan prosedur pencairan dan dokumen yang diperlukan untuk KIP JAWARA"
 
 
 # ============================================================
@@ -151,19 +132,20 @@ async def lifespan(app: FastAPI):
         state.startup_time = round(time.time() - t0, 2)
         
         # Dapatkan IP publik secara opsional untuk visualisasi akses eksternal di VPS
-        vps_ip = "0.0.0.0"
+        ip = "0.0.0.0"
+        port = "8002"
         try:
             with httpx.Client(timeout=2.0) as client:
                 resp = client.get("https://api.ipify.org")
                 if resp.status_code == 200:
-                    vps_ip = resp.text.strip()
+                    ip = resp.text.strip()
         except Exception:
             pass
 
-        if vps_ip != "0.0.0.0":
-            logger.info("✅ Retrieval siap dalam %.2fs. Service dapat diakses secara eksternal di: http://%s:8000", state.startup_time, vps_ip)
+        if ip != "0.0.0.0":
+            logger.info(f"✅ Retrieval siap dalam {state.startup_time:.2f}s. Service dapat diakses secara eksternal di: http://{ip}:{port}")
         else:
-            logger.info("✅ Retrieval siap dalam %.2fs. Generation memakai API RunPod.", state.startup_time)
+            logger.info(f"✅ Retrieval siap dalam {state.startup_time:.2f}s. Generation memakai API RunPod.")
     except Exception as e:
         state.ready = False
         state.startup_error = str(e)
@@ -184,7 +166,7 @@ app = FastAPI(
         "**SIRA — Sistem Rekomender Intervensi & Kebijakan Program Sosial**\n\n"
         "REST API untuk sistem rekomendasi program bantuan sosial berbasis RAG.\n\n"
         "Pipeline: `Qdrant Semantic Search` → `RunPod/OpenAI-compatible LLM Generation`\n\n"
-        "Tim 3 Universitas Brawijaya × DISKOMINFO Jawa Timur (AITF 2026)"
+        "MKN 3 Universitas Brawijaya (AITF 2026)"
     ),
     version="3.0.0",
     lifespan=lifespan,
@@ -204,8 +186,8 @@ app.add_middleware(
 
 from schemas import (
     RecommendRequest, AskRequest, RetrieveOnlyRequest,
-    SpesifikasiProgram, RekomendasiProgram, ProgramTidakSesuai,
-    SourceDocument, RetrieveChunkResult, RetrieveOnlyResponse,
+    RekomendasiProgram, ProgramTidakSesuai,
+    RetrieveChunkResult, RetrieveOnlyResponse,
     RecommendResponse, AskResponse, HealthResponse, ProgramInfo
 )
 
@@ -244,7 +226,6 @@ def check_ready(require_llm: bool = False):
             }
         )
 
-
 def retrieve_semantic_only(
     query: str,
     top_k: int,
@@ -267,12 +248,6 @@ def retrieve_semantic_only(
     return results[:top_n]
 
 
-
-
-
-
-
-
 # ============================================================
 # ENDPOINTS
 # ============================================================
@@ -293,7 +268,6 @@ def health():
             "qdrant_url": QDRANT_URL,
             "collection": QDRANT_COLLECTION,
             "embed_model": EMBED_MODEL_NAME,
-            # "reranker": RERANKER_MODEL_NAME,  # Dinonaktifkan untuk uji coba semantic-only.
             "llm_model": RUNPOD_MODEL_NAME,
             "default_top_k": RETRIEVAL_TOP_K,
             "default_top_n": RERANK_TOP_N,
@@ -309,7 +283,6 @@ def list_programs():
         ProgramInfo(filename=f, nama_program=n)
         for f, n in PROGRAM_LABELS.items()
     ]
-
 
 @app.post("/recommend", response_model=RecommendResponse, tags=["RAG"],
           summary="Rekomendasi program bantuan berdasarkan profil warga")
@@ -331,27 +304,27 @@ def recommend(req: RecommendRequest):
         top_k = req.top_k or RETRIEVAL_TOP_K
         top_n = req.top_n or RERANK_TOP_N
 
-        # [Bug 1 Fix] Gunakan _parse_content_to_retrieval_query() atas
-        # SELURUH string profil_warga tanpa [:300] slicing.
-        # BGE-M3 mendukung context window besar (8192 token), sehingga
-        # informasi disabilitas, usaha, dll. di bagian bawah profil tidak hilang.
-        query_for_retrieval = _parse_content_to_retrieval_query(req.profil_warga)
-        inferred_sources = infer_retrieval_sources_from_profile(req.profil_warga)
+        # Deteksi jika profil_warga sudah memuat struktur template prompt lengkap
+        core_profile = req.profil_warga
+        instructions = None
+        has_template = "=== PROFIL WARGA ===" in req.profil_warga
+        
+        if has_template:
+            profile_match = re.search(r"=== PROFIL WARGA ===\s*(.*?)\s*=== AKHIR PROFIL WARGA ===", req.profil_warga, re.DOTALL)
+            if profile_match:
+                core_profile = profile_match.group(1).strip()
+            
+            instruction_match = re.search(r"INSTRUKSI EKSEKUSI:\s*(.*)", req.profil_warga, re.DOTALL)
+            if instruction_match:
+                instructions = instruction_match.group(1).strip()
+
+        query_for_retrieval = _parse_content_to_retrieval_query(core_profile)
+        inferred_sources = infer_retrieval_sources_from_profile(core_profile)
 
         logger.info("🔎 /recommend effective_query: %s", query_for_retrieval[:200])
         if inferred_sources:
             logger.info("🎯 /recommend target program sources: %s", inferred_sources)
 
-        # [Bug 3 Fix] Filter 6 program utama dilakukan secara native di Qdrant
-        # via allowed_sources — bukan post-filter list comprehension.
-        # Dengan ini kuota top_k tidak terbuang oleh dokumen luar program.
-        # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
-        # results = state.retriever.retrieve(
-        #     query_for_retrieval,
-        #     top_k=top_k,
-        #     top_n=top_n,
-        #     allowed_sources=list(PROGRAM_LABELS.keys()),   # [Bug 3 Fix]
-        # )
         results = retrieve_semantic_only(
             query_for_retrieval,
             top_k=top_k,
@@ -365,23 +338,38 @@ def recommend(req: RecommendRequest):
 
         context = build_context_grouped(results)
 
-        profil_section = f"=== PROFIL WARGA ===\n{req.profil_warga}"
+        if has_template:
+            user_prompt = f"=== PROFIL WARGA ===\n{core_profile}\n=== AKHIR PROFIL WARGA ===\n\n"
+            user_prompt += f"=== KONTEKS DOKUMEN KEBIJAKAN DARI RETRIEVAL ===\n{context}\n=== AKHIR KONTEKS DOKUMEN ===\n\n"
+            if instructions:
+                user_prompt += f"INSTRUKSI EKSEKUSI:\n{instructions}"
+            else:
+                user_prompt += (
+                    "INSTRUKSI EKSEKUSI:\n"
+                    "1. Isi JSON dengan data konkret dari profil warga dan konteks dokumen.\n"
+                    "2. Jika warga lansia 70+ dan desil/DTSEN memenuhi, prioritaskan evaluasi PKH Plus.\n"
+                    "3. Jika umur warga kurang dari 70 tahun, PKH Plus wajib TIDAK_ELIGIBLE.\n"
+                    "4. Jika warga memiliki hambatan fungsi/disabilitas dan usia memenuhi, evaluasi ASPD.\n"
+                    "5. Program yang tidak cocok harus masuk program_tidak_sesuai dengan alasan spesifik.\n"
+                    "6. Respons hanya JSON valid. Jangan memakai markdown, heading, atau placeholder."
+                )
+        else:
+            user_prompt = (
+                "=== PROFIL WARGA ===\n"
+                f"{req.profil_warga}\n"
+                "=== AKHIR PROFIL WARGA ===\n\n"
+                "=== KONTEKS DOKUMEN KEBIJAKAN DARI RETRIEVAL ===\n"
+                f"{context}\n"
+                "=== AKHIR KONTEKS DOKUMEN ===\n\n"
+                "INSTRUKSI EKSEKUSI:\n"
+                "1. Isi JSON dengan data konkret dari profil warga dan konteks dokumen.\n"
+                "2. Jika warga lansia 70+ dan desil/DTSEN memenuhi, prioritaskan evaluasi PKH Plus.\n"
+                "3. Jika umur warga kurang dari 70 tahun, PKH Plus wajib TIDAK_ELIGIBLE.\n"
+                "4. Jika warga memiliki hambatan fungsi/disabilitas dan usia memenuhi, evaluasi ASPD.\n"
+                "5. Program yang tidak cocok harus masuk program_tidak_sesuai dengan alasan spesifik.\n"
+                "6. Respons hanya JSON valid. Jangan memakai markdown, heading, atau placeholder.\n"
+            )
 
-        user_prompt = (
-            "=== PROFIL WARGA DARI TIM 4 (ACUAN UTAMA) ===\n"
-            f"{req.profil_warga}\n"
-            "=== AKHIR PROFIL WARGA ===\n\n"
-            "=== KONTEKS DOKUMEN KEBIJAKAN DARI RETRIEVAL ===\n"
-            f"{context}\n"
-            "=== AKHIR KONTEKS DOKUMEN ===\n\n"
-            "INSTRUKSI EKSEKUSI:\n"
-            "1. Isi JSON dengan data konkret dari profil warga dan konteks dokumen.\n"
-            "2. Jika warga lansia 70+ dan desil/DTSEN memenuhi, prioritaskan evaluasi PKH Plus.\n"
-            "3. Jika umur warga kurang dari 70 tahun, PKH Plus wajib TIDAK_ELIGIBLE.\n"
-            "4. Jika warga memiliki hambatan fungsi/disabilitas dan usia memenuhi, evaluasi ASPD.\n"
-            "5. Program yang tidak cocok harus masuk program_tidak_sesuai dengan alasan spesifik.\n"
-            "6. Respons hanya JSON valid. Jangan memakai markdown, heading, atau placeholder.\n"
-        )
         generation_messages = [
             {"role": "system", "content": JSON_RANKING_SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -394,16 +382,16 @@ def recommend(req: RecommendRequest):
                 "⚠️ Generation API gagal menghasilkan JSON valid, fallback deterministic dipakai: %s",
                 e.detail,
             )
-            parsed = build_fallback_generation(req.profil_warga, results)
+            parsed = build_fallback_generation(core_profile, results)
         except Exception as e:
             logger.warning(
                 "⚠️ Generation API Tim 1/RunPod gagal, fallback deterministic dipakai: %s",
                 e,
             )
-            parsed = build_fallback_generation(req.profil_warga, results)
+            parsed = build_fallback_generation(core_profile, results)
         raise_if_parse_error(parsed)
         logger.info("DEBUG PARSED: %s", json.dumps(parsed, indent=2, ensure_ascii=False))
-        parsed = enforce_program_eligibility_rules(parsed, req.profil_warga)
+        parsed = enforce_program_eligibility_rules(parsed, core_profile)
 
         elapsed_ms = int((time.time() - t0) * 1000)
         program_count = len(set(r.metadata.get("sumber", "") for r in results))
@@ -535,7 +523,7 @@ def retrieve_only(req: RetrieveOnlyRequest):
     2. **Finalisasi** — return top-N terbaik berdasarkan skor embedding
 
     **Tidak ada** LLM yang dipanggil. Cocok untuk:
-    - Inspeksi konteks sebelum dikirim ke LLM eksternal (e.g. Gemini, GPT)
+    - Inspeksi konteks sebelum dikirim ke LLM
     - Debugging pipeline retrieval
     - Mengambil konteks chunk untuk diproses sendiri
 
@@ -561,8 +549,6 @@ def retrieve_only(req: RetrieveOnlyRequest):
         logger.info("🔎 /retrieve effective_query (200 chars): %s", effective_query[:200])
 
         # ── Step 3: Jalankan retrieval ──────────────────────────────────────
-        # [Bug 3 Fix] filter_programs_only sekarang menggunakan native Qdrant
-        # allowed_sources, bukan post-filter Python setelah retrieval.
         allowed = (
             inferred_sources
             if inferred_sources
@@ -570,23 +556,17 @@ def retrieve_only(req: RetrieveOnlyRequest):
         )
         if inferred_sources:
             logger.info("🎯 /retrieve target program sources: %s", inferred_sources)
-        # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
-        # results = state.retriever.retrieve(
-        #     effective_query,
-        #     top_k=top_k,
-        #     top_n=top_n,
-        #     allowed_sources=allowed,   # [Bug 3 Fix]
-        # )
+
         results = retrieve_semantic_only(
             effective_query,
             top_k=top_k,
             top_n=top_n,
-            allowed_sources=allowed,   # [Bug 3 Fix]
+            allowed_sources=allowed, 
         )
 
         if not results:
             detail = (
-                "Tidak ada chunk dari 6 program utama yang relevan untuk query tersebut."
+                "Tidak ada chunk dari program yang relevan untuk query tersebut."
                 if req.filter_programs_only
                 else "Tidak ada dokumen relevan ditemukan untuk query tersebut."
             )
@@ -641,7 +621,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "webservice:app",
         host="0.0.0.0",
-        port=8000,
+        port=8002,
         reload=False,
         log_level="info",
     )
