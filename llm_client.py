@@ -66,9 +66,6 @@ def extract_chat_content(api_response: dict) -> str:
 
 
 def call_runpod_chat_api(api_url: str, messages: list[dict]) -> str:
-    if not RUNPOD_API_KEY:
-        raise RuntimeError("RUNPOD_API_KEY belum terisi di .env.")
-
     payload = {
         "model": RUNPOD_MODEL_NAME,
         "messages": messages,
@@ -76,11 +73,13 @@ def call_runpod_chat_api(api_url: str, messages: list[dict]) -> str:
         "max_tokens": RUNPOD_MAX_TOKENS,
     }
     headers = {
-        "Authorization": f"Bearer {RUNPOD_API_KEY}",
         "Content-Type": "application/json",
     }
+    if RUNPOD_API_KEY:
+        headers["Authorization"] = f"Bearer {RUNPOD_API_KEY}"
 
     try:
+        logger.info("PAYLOAD SENT TO TIM 1: %s", json.dumps(payload, indent=2, ensure_ascii=False))
         with httpx.Client(timeout=TIM1_API_TIMEOUT_S) as client:
             resp = client.post(api_url, json=payload, headers=headers)
             resp.raise_for_status()
