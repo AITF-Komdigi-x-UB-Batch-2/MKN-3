@@ -15,10 +15,32 @@ logger = logging.getLogger(__name__)
 # ============================================================
 # RETRIEVE SYSTEM PROMPT
 # ============================================================
+
+# Query default jika program tidak terdeteksi dari profil.
 RETRIEVE_SYSTEM_PROMPT = (
-    "Temukan syarat kelayakan, kriteria sasaran penerima, besaran nominal bantuan, "
-    "dan mekanisme pencairan untuk program PKH Plus (lanjut usia 70 tahun ke atas) "
-    "dan ASPD (penyandang disabilitas) berdasarkan petunjuk teknis resmi."
+    "syarat kelayakan kriteria sasaran penerima manfaat "
+    "besaran nominal bantuan sosial tahapan pencairan "
+    "PKH Plus lanjut usia 70 tahun ASPD penyandang disabilitas "
+    "juknis juklak resmi Provinsi Jawa Timur"
+)
+
+# Query khusus PKH Plus — token semantik disesuaikan dengan teks chunk kritis
+# (halaman 8 juknis: "Besaran nominal bantuan sosial PKH Plus ... Rp. 2.000.000 ...
+# disalurkan dalam empat tahap ... nominal masing-masing Rp. 500.000")
+RETRIEVE_QUERY_PKH_PLUS = (
+    "sasaran penerima lanjut usia 70 tahun ke atas desil 1 2 3 4 DTSEN "
+    "besaran nominal bantuan sosial PKH Plus Rp 2000000 dua juta rupiah "
+    "penyaluran empat tahap masing-masing Rp 500000 rekening Bank Jatim "
+    "syarat KTP NIK KK Provinsi Jawa Timur pencairan non tunai"
+)
+
+# Query khusus ASPD — token semantik disesuaikan dengan teks chunk kritis
+# (halaman 30 juklak: "Rp. 900.000 ... disalurkan dalam 4 tahapan ...")
+RETRIEVE_QUERY_ASPD = (
+    "sasaran penerima penyandang disabilitas usia dari 6 bulan hingga 60 tahun "
+    "besaran nominal bantuan sosial ASPD Rp 900000 sembilan ratus ribu rupiah "
+    "penyaluran empat tahap rekening Bank Jatim Provinsi Jawa Timur "
+    "syarat kelayakan kriteria verifikasi pendamping"
 )
 
 
@@ -228,20 +250,38 @@ def infer_retrieval_sources_from_profile(content: str) -> Optional[list[str]]:
     return target_sources or None
 
 
+# Mapping nama file sumber ke query semantik yang kaya token.
+_SOURCE_SPECIFIC_QUERIES: dict[str, str] = {
+    "JUKNIS PKH PLUS 2026.pdf": RETRIEVE_QUERY_PKH_PLUS,
+    "Juklak ASPD Tahun 202620260225_12303533_01.pdf": RETRIEVE_QUERY_ASPD,
+}
+
+
 def retrieval_prompt_for_sources(sources: Optional[list[str]]) -> str:
+    """
+    Buat query retrieval semantik berdasarkan daftar program yang terdeteksi.
+
+    Jika hanya 1 program terdeteksi → gunakan query spesifik program tersebut
+    agar embedding lebih terarah ke chunk nominal + mekanisme pencairan.
+    Jika lebih dari 1 atau tidak ada → gunakan gabungan query atau fallback default.
+    """
     if not sources:
         return RETRIEVE_SYSTEM_PROMPT
 
-    program_names = [
-        PROGRAM_LABELS.get(source, source.replace(".pdf", ""))
-        for source in sources
-    ]
-    return (
-        "Temukan syarat kelayakan, kriteria sasaran penerima, besaran nominal bantuan, "
-        "dan mekanisme pencairan untuk program berikut berdasarkan petunjuk teknis resmi: "
-        + "; ".join(program_names)
-        + "."
-    )
+    # Kasus 1 program — pakai query semantik spesifik
+    if len(sources) == 1:
+        specific = _SOURCE_SPECIFIC_QUERIES.get(sources[0])
+        if specific:
+            return specific
+
+    # Kasus multi-program — gabungkan query spesifik per program
+    parts = [_SOURCE_SPECIFIC_QUERIES.get(src) for src in sources]
+    parts = [p for p in parts if p]  # filter None
+    if parts:
+        return " ".join(parts)
+
+    # Fallback ke default jika tidak ada query spesifik terdaftar
+    return RETRIEVE_SYSTEM_PROMPT
 
 
 def normalize_spesifikasi(raw: object) -> Optional[SpesifikasiProgram]:
