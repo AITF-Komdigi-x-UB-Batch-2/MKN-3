@@ -296,7 +296,7 @@ def recommend(req: RecommendRequest):
 
     try:
         top_k = req.top_k or RETRIEVAL_TOP_K
-        top_n = req.top_n or RERANK_TOP_N
+        top_n = req.top_n or top_k
 
         # Deteksi jika profil_warga sudah memuat struktur template prompt lengkap
         core_profile = req.profil_warga
@@ -465,7 +465,7 @@ def ask(req: AskRequest):
 
     try:
         top_k = req.top_k or RETRIEVAL_TOP_K
-        top_n = req.top_n or RERANK_TOP_N
+        top_n = req.top_n or top_k
 
         # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
         # results = state.retriever.retrieve(req.query, top_k=top_k, top_n=top_n)
@@ -529,7 +529,7 @@ def retrieve_only(req: RetrieveOnlyRequest):
 
     try:
         top_k = req.top_k or RETRIEVAL_TOP_K
-        top_n = req.top_n or RERANK_TOP_N
+        top_n = req.top_n or top_k
 
         # ── Step 1: Parse content → keyword query padat ─────────────────────
         effective_query = _parse_content_to_retrieval_query(req.content)
