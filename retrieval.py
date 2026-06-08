@@ -160,6 +160,54 @@ class PolicyRetriever:
         )
         return results
 
+    def retrieve_nominal_chunk(self, source_file: str) -> list[RetrievalResult]:
+        """
+        Mengambil chunk khusus nominal bantuan berdasarkan nama file sumber (sumber)
+        dengan jaminan tipe_konten mengandung 'nominal_bantuan'.
+        """
+        conditions = [
+            models.FieldCondition(
+                key="sumber",
+                match=models.MatchValue(value=source_file),
+            ),
+            models.FieldCondition(
+                key="tipe_konten",
+                match=models.MatchValue(value="nominal_bantuan"),
+            )
+        ]
+        qdrant_filter = models.Filter(must=conditions)
+
+        # Lakukan search dengan limit=1 menggunakan query vector statis bertema nominal
+        embedder_model = self.client._model_embedder.embedder.get_or_init_model(config.EMBED_MODEL_NAME)
+        query_vector = list(embedder_model.embed(["nominal besaran bantuan dana tahap"]))[0].tolist()
+
+        hits = self.client.query_points(
+            collection_name=self.collection,
+            query=query_vector,
+            using=self.vector_name,
+            limit=1,
+            query_filter=qdrant_filter,
+        ).points
+
+        results = []
+        for h in hits:
+            payload = h.payload or {}
+            text = payload.get("text", "")
+            metadata = {k: v for k, v in payload.items() if k != "text"}
+            results.append(RetrievalResult(
+                text=text,
+                metadata=metadata,
+                score=float(h.score),
+                embed_score=float(h.score),
+            ))
+        
+        if results:
+            logger.info("🎯 retrieve_nominal_chunk berhasil menarik chunk nominal untuk %s", source_file)
+        else:
+            logger.warning("⚠️ retrieve_nominal_chunk gagal menemukan chunk nominal untuk %s", source_file)
+        return results
+
+
 
 if __name__ == "__main__":
     # Setup logging to console for testing

@@ -315,6 +315,11 @@ def recommend(req: RecommendRequest):
         query_for_retrieval = _parse_content_to_retrieval_query(core_profile)
         inferred_sources = infer_retrieval_sources_from_profile(core_profile)
 
+        # ── Prepend prompt retrieval sesuai program target untuk meningkatkan kemiripan nominal ──
+        retrieval_prompt = retrieval_prompt_for_sources(inferred_sources)
+        if retrieval_prompt and retrieval_prompt.strip():
+            query_for_retrieval = f"{retrieval_prompt.strip()}\n\n{query_for_retrieval}"
+
         logger.info("🔎 /recommend effective_query: %s", query_for_retrieval[:200])
         if inferred_sources:
             logger.info("🎯 /recommend target program sources: %s", inferred_sources)
@@ -329,6 +334,32 @@ def recommend(req: RecommendRequest):
         if not results:
             raise HTTPException(status_code=404,
                 detail="Tidak ada dokumen 6 program utama yang relevan ditemukan untuk profil yang diberikan.")
+
+        # ── Jalankan Metode 1: Sisipkan chunk nominal untuk menjamin ketersediaan data nominal ──
+        target_sources_for_nominal = inferred_sources or list(set(
+            r.metadata.get("sumber") for r in results 
+            if r.metadata.get("sumber") in PROGRAM_LABELS
+        ))
+        
+        nominal_chunks = []
+        if target_sources_for_nominal:
+            for src_file in target_sources_for_nominal:
+                try:
+                    nom_hits = state.retriever.retrieve_nominal_chunk(src_file)
+                    nominal_chunks.extend(nom_hits)
+                except Exception as ex:
+                    logger.warning("⚠️ Gagal mengambil nominal chunk untuk %s: %s", src_file, ex)
+
+        if nominal_chunks:
+            seen_texts = {r.text for r in results}
+            added_count = 0
+            for nom_chunk in nominal_chunks:
+                if nom_chunk.text not in seen_texts:
+                    results.append(nom_chunk)
+                    seen_texts.add(nom_chunk.text)
+                    added_count += 1
+            if added_count > 0:
+                logger.info("💉 Berhasil menyisipkan %d chunk nominal tambahan ke hasil retrieval.", added_count)
 
         context = build_context_grouped(results)
 
@@ -616,6 +647,6 @@ if __name__ == "__main__":
         "webservice:app",
         host="0.0.0.0",
         port=8002,
-        reload=False,
+        reload=True,
         log_level="info",
     )
