@@ -111,63 +111,155 @@ RUNPOD_TEMPERATURE = DEFAULT_TEMPERATURE
 RUNPOD_MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))
 
 # ============================================================
-# PROMPT TEMPLATES
+# FEW-SHOT EXAMPLES (TOON format)
+# Digunakan sebagai in-context learning untuk membimbing model
+# menghasilkan output TOON yang konsisten.
 # ============================================================
-STRICT_RAG_OUTPUT_CONTRACT = """
-=== KONTRAK FORMAT OUTPUT FINAL - WAJIB DIIKUTI ===
-Jawaban HARUS memakai urutan heading berikut, tanpa heading bebas lain:
-1. ## Ringkasan Profil Warga
-2. ## Ranking Rekomendasi Program Bantuan
-3. tepat 2 heading program utama:
-   - ### Rank N: [Nama Program] - STATUS: ELIGIBLE
-   - ### Rank N: [Nama Program] - STATUS: MUNGKIN ELIGIBLE
-   - ### [Nama Program] - STATUS: TIDAK ELIGIBLE
-Jawaban selesai setelah kedua heading program utama.
 
-Program utama wajib muncul masing-masing satu kali:
-- Asistensi Sosial Penyandang Disabilitas (ASPD)
-- PKH Plus (Lanjut Usia 70+)
+FEW_SHOT_USER_EXAMPLE = (
+    "=== PROFIL WARGA ===\n"
+    "- NIK / No. KK     : PRS_4b5389362ecd8a49225ce6cb51a267f414e96693eb6a1461c42542b469a0244f / FAM_25825cc1cb27c99e5f01836f56d13a4cf702e47fc5d633f845efaf8338869340\n"
+    "- Nama             : ***ALI\n"
+    "- Umur             : 77 tahun\n"
+    "- Hub. Kepala KK   : Kepala keluarga\n"
+    "- Status Kawin     : Kawin\n"
+    "- Jml. Anggota KK  : 5 orang\n"
+    "- Desil Nasional   : 2 | Status DTSEN: DTSEN AKTIF\n"
+    "- Status Keberadaan: Ditemukan / Aktif\n"
+    "- Bansos           : PKH, SEMBAKO\n"
+    "- PBI Jaminan Kes  : Ya\n"
+    "- Kondisi Gizi     : Tidak diketahui\n"
+    "- Penyakit Menahun : Tidak ada\n"
+    "Hambatan Fungsi:\n"
+    "- Penglihatan      : Tidak mengalami kesulitan | Pendengaran: Tidak mengalami kesulitan\n"
+    "- Berjalan/Tangga  : Tidak mengalami kesulitan | Tangan/Jari: Tidak mengalami kesulitan\n"
+    "- Belajar/Intelek  : Tidak mengalami kesulitan | Perilaku: Tidak mengalami kesulitan\n"
+    "- Bicara/Komunikasi: Tidak mengalami kesulitan | Mengurus Diri: Tidak mengalami kesulitan\n"
+    "- Ingatan/Fokus    : Tidak mengalami kesulitan | Sedih/Depresi: Tidak mengalami kesulitan\n"
+    "- Wilayah          : Purwantoro, Kec. Blimbing, Kota Malang, Jawa Timur\n"
+    "=== AKHIR PROFIL WARGA ===\n\n"
+    "=== KONTEKS DOKUMEN KEBIJAKAN DARI RETRIEVAL ===\n"
+    "<dokumen_juknis>\n"
+    "a) Meningkatkan taraf hidup dan kesejahteraan penerima manfaat melalui\n"
+    "penerima manfaat;\n"
+    "penerima manfaat dalam mengakses layanan kesehatan dan\n"
+    "2. Sasaran Penerima Bantuan sosial PKH Plus\n"
+    "a) Lanjut usia 70 Tahun ke atas seorang diri dan/atau yang tercatat dalam satu\n"
+    "kartu keluarga dalam keluarga penerima manfaat Program Keluarga Harapan\n"
+    "tingkat kesejahteraan sosial atau desil 1, 2, 3 dan 4;\n"
+    "d) Dalam hal penerima manfaat dalam satu keluarga terdapat lebih dari satu\n"
+    "Sesuai Surat Keputusan Gubernur Jawa Timur tentang Penerima Manfaat PKH\n\n"
+    "Dalam rangka perlindungan dan jaminan sosial bagi lanjut usia, menjadi\n"
+    "inklusif. Lanjut usia merupakan kelompok masyarakat yang secara sosial dan\n"
+    "lanjut usia 70 tahun ke atas, Pemerintah Provinsi Jawa Timur memberikan bantuan\n"
+    "prinsip 6T (tepat sasaran, tepat waktu, tepat jumlah, tepat administrasi, tepat kualitas,\n\n"
+    "bantuan sosial PKH Plus kepada penerima manfaat PKH Plus berdasarkan berita\n"
+    "Penerima manfaat sudah tidak menerima bantuan sosial PKH regular dari\n"
+    "Status penerima manfaat yang meninggal dunia dilaporkan dengan melampirkan\n"
+    "Status penerima manfaat yang sudah mampu secara ekonomi.\n"
+    "Status penerima manfaat yang pindah alamat domisili di luar Provinsi Jawa Timur.\n"
+    "5. Data penerima ganda\n"
+    "Penerima manfaat yang duplikasi individu/keluarga yang terdaftar sebagai\n"
+    "penerima manfaat bantuan sosial PKH Plus\n"
+    "</dokumen_juknis>\n"
+    "=== AKHIR KONTEKS DOKUMEN ===\n\n"
+    "INSTRUKSI EKSEKUSI:\n"
+    "1. Lakukan audit kelayakan secara objektif dengan mencocokkan kriteria pada Profil Warga terhadap aturan di Konteks Dokumen.\n"
+    "2. Hasilkan output TEPAT dalam format Toon dengan empat kategori wajib: 'ringkasan_profil', 'rekomendasi', 'rekomendasi_teknis_bansos', dan 'program_tidak_sesuai'.\n"
+    "3. Pada baris 'rekomendasi', Anda wajib memuat informasi: rank, dasar hukum, dan alasan kelayakan di dalam kolom Detail/Alasan.\n"
+    "4. Pada baris 'program_tidak_sesuai', Anda wajib memuat informasi: alasan ketidaksesuaian di dalam kolom Detail/Alasan.\n"
+    "5. Respons hanya berupa teks format Toon valid. Jangan pernah memakai tag markdown pembungkus (seperti ```toon ...), heading teks tambahan di luar struktur, atau placeholder."
+)
 
-Jumlah heading program ber-STATUS harus tepat 6. Jika sebuah program tidak
-cocok dengan profil, tulis sekali sebagai TIDAK ELIGIBLE, jangan dihapus dan
-jangan diganti dengan duplikasi program lain.
+FEW_SHOT_ASSISTANT_EXAMPLE = (
+    "Hasil[4]{Kategori,Nilai/Program,Status,Detail/Alasan}:\n"
+    "ringkasan_profil,Profil_Warga,-,\"Warga berusia 77 tahun dengan posisi hubungan keluarga sebagai Kepala keluarga dan status pernikahan Kawin. Secara ekonomi, status kesejahteraan berada pada desil nasional 2 dengan status keberadaan lapangan: Ditemukan / Aktif. Kondisi kesehatan mencatat riwayat gizi Tidak diketahui, status kepesertaan PBI Jaminan Kesehatan: Ya, serta indikasi penyakit menahun: Tidak ada. Evaluasi hambatan fungsional utama mencatat dimensi mengurus diri mandiri berstatus Tidak mengalami kesulitan, serta mobilisasi berjalan terpantau berstatus Tidak mengalami kesulitan.\"\n"
+    "program_tidak_sesuai,Asistensi Sosial Penyandang Disabilitas (ASPD),TIDAK_ELIGIBLE,\"Alasan: Warga tidak memenuhi syarat program ASPD. Berdasarkan rekaman indikator fungsional, dimensi mengurus diri terpantau 'Tidak mengalami kesulitan' dan berjalan terpantau 'Tidak mengalami kesulitan', sehingga tidak masuk dalam kategori disabilitas berat yang membutuhkan asistensi sosial berkelanjutan.\"\n"
+    "rekomendasi,PKH Plus (Lanjut Usia 70+),ELIGIBLE,\"Rank: 1 | Dasar Hukum: Juknis PKH Plus 2026 | Alasan: Warga atas nama ***ALI dinyatakan LAYAK menerima program PKH Plus karena secara kronologis telah berusia 77 tahun yang memenuhi syarat minimum juknis (70 tahun ke atas). Ditinjau dari aspek ekonomi, posisi rumah tangga berada pada desil 2 dengan status keberadaan Ditemukan / Aktif, yang merupakan klaster prioritas utama jaminan sosial Provinsi Jawa Timur.\"\n"
+    "rekomendasi_teknis_bansos,Rencana_Aksi,-,\"Rekomendasi prioritas pemanfaatan ditujukan untuk pemenuhan kebutuhan dasar pokok, nutrisi gizi, serta layanan kesehatan utama penerima manfaat program PKH Plus Jatim. Otoritas penyaluran dan pemantauan lapangan berada di bawah koordinasi teknis Bank Jatim bersama Pendamping PKH dengan pendampingan melekat secara berkala oleh Pendamping Sosial PKH untuk menjamin ketepatan penggunaan dana. Alokasi dana bantuan sebesar Rp 500.000 per tahap (dengan total alokasi Rp 2.000.000 per tahun untuk 4 kali pencairan) wajib diprioritaskan untuk belanja pangan sehat serta biaya kontrol medis rutin, didukung langkah mitigasi berupa edukasi intensif kepala keluarga guna mencegah penyelewengan dana pada pos non-prioritas. Evaluasi dilakukan via uji petik lapangan dan pemutakhiran data verifikasi berkala pada setiap pergantian tahap pencairan guna memastikan hasil audit klasterisasi tetap valid.\""
+)
 
-DILARANG memakai heading: "## Analisis Program", "### Kesimpulan",
-heading rekomendasi/tindak lanjut/catatan, "**Rekomendasi:**", atau
-mengulang program utama.
-"""
+
+# ============================================================
+# PROMPT TEMPLATES (TOON format)
+# ============================================================
 
 PROMPT_TEMPLATE = (
-    "{system_prompt}\n\n"
-    "=== KONTEKS DOKUMEN KEBIJAKAN ===\n"
-    "{context}\n"
-    "=== AKHIR KONTEKS ===\n\n"
-    "=== DATA PROFIL KELUARGA (ACUAN UTAMA, BUKAN DATA DOKUMEN) ===\n"
+    "<|im_start|>system\n"
+    "{system_prompt}<|im_end|>\n"
+    "<|im_start|>user\n"
+    f"{FEW_SHOT_USER_EXAMPLE}<|im_end|>\n"
+    "<|im_start|>assistant\n"
+    f"{FEW_SHOT_ASSISTANT_EXAMPLE}<|im_end|>\n"
+    "<|im_start|>user\n"
+    "=== PROFIL WARGA ===\n"
     "{query}\n"
-    "=== AKHIR DATA PROFIL ===\n\n"
-    "INSTRUKSI FINAL: Ringkasan Profil Warga wajib berasal dari DATA PROFIL KELUARGA di atas. "
-    "Jangan mengganti umur, disabilitas, lansia, atau program cocok berdasarkan contoh di dokumen.\n\n"
-    f"{STRICT_RAG_OUTPUT_CONTRACT}\n"
-    "## Ringkasan Profil Warga"
+    "=== AKHIR PROFIL WARGA ===\n\n"
+    "=== KONTEKS DOKUMEN KEBIJAKAN DARI RETRIEVAL ===\n"
+    "<dokumen_juknis>\n"
+    "{context}\n"
+    "</dokumen_juknis>\n"
+    "=== AKHIR KONTEKS DOKUMEN ===\n\n"
+    "INSTRUKSI EKSEKUSI:\n"
+    "1. Lakukan audit kelayakan secara objektif dengan mencocokkan kriteria pada Profil Warga terhadap aturan di Konteks Dokumen.\n"
+    "2. Hasilkan output TEPAT dalam format Toon dengan empat kategori wajib: 'ringkasan_profil', 'rekomendasi', 'rekomendasi_teknis_bansos', dan 'program_tidak_sesuai'.\n"
+    "3. Pada baris 'rekomendasi', Anda wajib memuat informasi: rank, dasar hukum, dan alasan kelayakan di dalam kolom Detail/Alasan.\n"
+    "4. Pada baris 'program_tidak_sesuai', Anda wajib memuat informasi: alasan ketidaksesuaian di dalam kolom Detail/Alasan.\n"
+    "5. Respons hanya berupa teks format Toon valid. Jangan pernah memakai tag markdown pembungkus (seperti ```toon ...), heading teks tambahan di luar struktur, atau placeholder.<|im_end|>\n"
+    "<|im_start|>assistant\n"
 )
 
 POLICY_PROMPT_TEMPLATE = (
-    "{system_prompt}\n\n"
-    "=== KONTEKS DOKUMEN KEBIJAKAN ===\n"
-    "{context}\n"
-    "=== AKHIR KONTEKS ===\n\n"
-    "=== DATA PROFIL KELUARGA DAN HASIL ANALISIS TIM 1 (ACUAN UTAMA, BUKAN DATA DOKUMEN) ===\n"
+    "<|im_start|>system\n"
+    "{system_prompt}<|im_end|>\n"
+    "<|im_start|>user\n"
+    f"{FEW_SHOT_USER_EXAMPLE}<|im_end|>\n"
+    "<|im_start|>assistant\n"
+    f"{FEW_SHOT_ASSISTANT_EXAMPLE}<|im_end|>\n"
+    "<|im_start|>user\n"
+    "=== PROFIL WARGA ===\n"
     "{scoring_result}\n"
-    "=== AKHIR DATA PROFIL ===\n\n"
-    "INSTRUKSI FINAL: Ikuti FORMAT OUTPUT persis seperti yang diperintahkan. "
-    "Ringkasan Profil Warga wajib berasal dari DATA PROFIL KELUARGA di atas. "
-    "Konteks dokumen hanya dipakai sebagai syarat program, bukan sebagai data profil warga. "
-    "Jangan mengganti anak/disabilitas/usaha/desil dari profil dengan lansia atau sasaran contoh dari dokumen.\n\n"
-    f"{STRICT_RAG_OUTPUT_CONTRACT}\n"
-    "## Ringkasan Profil Warga"
+    "=== AKHIR PROFIL WARGA ===\n\n"
+    "=== KONTEKS DOKUMEN KEBIJAKAN DARI RETRIEVAL ===\n"
+    "<dokumen_juknis>\n"
+    "{context}\n"
+    "</dokumen_juknis>\n"
+    "=== AKHIR KONTEKS DOKUMEN ===\n\n"
+    "INSTRUKSI EKSEKUSI:\n"
+    "1. Lakukan audit kelayakan secara objektif dengan mencocokkan kriteria pada Profil Warga terhadap aturan di Konteks Dokumen.\n"
+    "2. Hasilkan output TEPAT dalam format Toon dengan empat kategori wajib: 'ringkasan_profil', 'rekomendasi', 'rekomendasi_teknis_bansos', dan 'program_tidak_sesuai'.\n"
+    "3. Pada baris 'rekomendasi', Anda wajib memuat informasi: rank, dasar hukum, dan alasan kelayakan di dalam kolom Detail/Alasan.\n"
+    "4. Pada baris 'program_tidak_sesuai', Anda wajib memuat informasi: alasan ketidaksesuaian di dalam kolom Detail/Alasan.\n"
+    "5. Respons hanya berupa teks format Toon valid. Jangan pernah memakai tag markdown pembungkus (seperti ```toon ...), heading teks tambahan di luar struktur, atau placeholder.<|im_end|>\n"
+    "<|im_start|>assistant\n"
 )
 
-SYSTEM_PROMPT = "Anda adalah AI Auditor resmi Dinas Sosial Provinsi Jawa Timur yang bertugas melakukan verifikasi dan validasi kelayakan penerima manfaat dua program bantuan sosial.\n\nTugas Anda: Berdasarkan PROFIL WARGA dan KONTEKS PROGRAM BANTUAN yang disediakan, evaluasi kelayakan warga HANYA untuk 2 program utama berikut:\n1. Asistensi Sosial Penyandang Disabilitas (ASPD)\n2. PKH Plus (Lanjut Usia 70+)\n\n=== INSTRUKSI PENTING ===\n1. Evaluasi hanya 2 program utama di atas secara individual.\n2. Tentukan status: \"ELIGIBLE\" atau \"TIDAK_ELIGIBLE\".\n3. Ranking dari yang paling cocok ke yang paling tidak cocok.\n4. Berikan reasoning yang jelas dan WAJIB mengutip sumber dokumen resmi juknis.\n5. JANGAN merekomendasikan program bantuan di luar 2 program utama tersebut.\n6. DILARANG KERAS menyebut Program Sembako, PKH reguler, BPNT, PBI Jaminan Kesehatan, Rutilahu, PIP, Jamkesda, atau bantuan tambahan lainnya.\n\n=== FORMAT OUTPUT ===\nAnda WAJIB merespons HANYA dengan JSON valid tanpa markdown dan tanpa teks pembuka/penutup.\nGunakan key berikut dengan urutan persis:\n- ringkasan_profil: string konkret berisi umur, desil, status DTSEN, disabilitas/usia lansia, dan kondisi kunci warga.\n- rekomendasi: array program yang ELIGIBLE atau MUNGKIN_ELIGIBLE. Setiap item di dalamnya wajib berisi key: rank, nama_program, status, dasar_hukum, dan alasan_kelayakan.\n- rekomendasi_teknis_bansos: string narasi tunggal (paragraf utuh tanpa objek/poin berlapis) yang menjabarkan rencana aksi operasional, prioritas pemanfaatan dana, mekanisme pendampingan, pengelola bantuan, serta monitoring evaluasi warga di lapangan. Jika warga tidak berhak menerima program bantuan apa pun (array rekomendasi kosong), maka nilai key ini WAJIB disetel null secara kaku.\n- program_tidak_sesuai: array program yang TIDAK_ELIGIBLE. Setiap item di dalamnya wajib berisi key: nama_program, status, dan alasan.\n\nLarangan keras:\n- Jangan menyalin placeholder seperti \"Nama Program\", \"Rp X.XXX.XXX\", \"dst\", \"rangkuman singkat\", atau \"Penjelasan mengapa\".\n- Jangan mengosongkan alasan. Semua alasan harus merujuk kondisi riil warga dan kriteria dokumen.\n- nama_program harus ditulis persis salah satu dari 2 program utama yang disebut di atas."
+SYSTEM_PROMPT = (
+    "[TASK_KLASIFIKASI_BANTUAN]\n"
+    "Anda adalah AI Auditor resmi Dinas Sosial Provinsi Jawa Timur yang bertugas melakukan verifikasi dan validasi kelayakan penerima manfaat dua program bantuan sosial.\n\n"
+    "Tugas Anda: Berdasarkan PROFIL WARGA dan KONTEKS PROGRAM BANTUAN (RETRIEVAL) yang disediakan, evaluasi kelayakan warga HANYA untuk 2 program utama berikut:\n"
+    "1. Asistensi Sosial Penyandang Disabilitas (ASPD)\n"
+    "2. PKH Plus (Lanjut Usia 70+)\n\n"
+    "=== INSTRUKSI PENTING ===\n"
+    "1. Evaluasi hanya 2 program utama di atas secara individual.\n"
+    "2. Tentukan status: \"ELIGIBLE\" atau \"TIDAK_ELIGIBLE\".\n"
+    "3. Ranking dari yang paling cocok ke yang paling tidak cocok.\n"
+    "4. Berikan reasoning yang jelas dan WAJIB mengutip sumber dokumen resmi juknis.\n"
+    "5. JANGAN merekomendasikan program bantuan di luar 2 program utama tersebut.\n"
+    "6. DILARANG KERAS menyebut Program Sembako, PKH reguler, BPNT, PBI Jaminan Kesehatan, Rutilahu, PIP, Jamkesda, atau bantuan tambahan lainnya.\n\n"
+    "=== FORMAT OUTPUT ===\n"
+    "Anda WAJIB merespons HANYA dengan TEPAT menggunakan format Toon berikut. Tidak boleh ada markdown (seperti ```toon atau ```) dan dilarang keras menambahkan teks pembuka/penutup.\n\n"
+    "Hasil[X]{Kategori,Nilai/Program,Status,Detail/Alasan}:\n"
+    "ringkasan_profil,Profil_Warga,-,\"[string konkret berisi umur, desil, status DTSEN, disabilitas/usia lansia, dan kondisi kunci warga]\"\n"
+    "rekomendasi,<Nama Program>,<Status>,\"Rank: <Angka> | Dasar Hukum: <Sumber> | Alasan: <Reasoning kelayakan>\"\n"
+    "rekomendasi_teknis_bansos,Rencana_Aksi,-,\"[string narasi tunggal (paragraf utuh tanpa objek/poin berlapis) yang menjabarkan rencana aksi operasional, prioritas pemanfaatan dana, mekanisme pendampingan, pengelola bantuan, serta monitoring evaluasi warga di lapangan. Jika warga tidak berhak menerima program bantuan apa pun, maka nilai ini WAJIB disetel null]\"\n"
+    "program_tidak_sesuai,<Nama Program>,<Status>,\"Alasan: <Reasoning ketidaksesuaian yang merujuk pada kondisi riil warga dan kriteria dokumen>\"\n\n"
+    "=== LARANGAN KERAS ===\n"
+    "- Jangan menyalin placeholder seperti \"Nama Program\", \"Rp X.XXX.XXX\", \"dst\", \"rangkuman singkat\", atau \"Penjelasan mengapa\".\n"
+    "- Jangan mengosongkan alasan. Semua alasan harus merujuk kondisi riil warga dan kriteria dokumen.\n"
+    "- nama_program harus ditulis persis salah satu dari 2 program utama yang disebut di atas."
+)
+
 
 # ============================================================
 # KONFIGURASI PDF EXTRACTION (Stage 00)

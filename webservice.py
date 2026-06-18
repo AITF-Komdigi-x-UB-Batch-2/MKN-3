@@ -29,6 +29,8 @@ from config import (
     RETRIEVAL_TOP_K, RERANK_TOP_N,
     RUNPOD_MODEL_NAME,
     configure_utf8_stdio,
+    FEW_SHOT_USER_EXAMPLE,
+    FEW_SHOT_ASSISTANT_EXAMPLE,
 )
 
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
@@ -194,8 +196,6 @@ from helpers import (
 )
 
 from llm_client import (
-    invoke_llm,
-    call_classification_api,
     call_generation_api_checked,
     raise_if_parse_error,
 )
@@ -397,6 +397,8 @@ def recommend(req: RecommendRequest):
 
         generation_messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": FEW_SHOT_USER_EXAMPLE},
+            {"role": "assistant", "content": FEW_SHOT_ASSISTANT_EXAMPLE},
             {"role": "user", "content": user_prompt},
         ]
 

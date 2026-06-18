@@ -8,7 +8,6 @@ from retrieval import RetrievalResult
 from helpers import (
     parse_profile_signals,
     normalize_program_name,
-    normalize_tim1_output,
     source_ref_for_program,
 )
 
@@ -34,6 +33,15 @@ def enforce_program_eligibility_rules(parsed: dict, profil_warga: str) -> dict:
     signals = parse_profile_signals(profil_warga)
     age = signals.get("umur")
     skor_pkh = signals.get("skor_pkh_plus")
+    has_disability = signals.get("has_disability")  # True/False/None
+
+    # Deteksi eksplisit: semua dimensi fungsional = "tidak mengalami kesulitan"
+    # (digunakan sebagai hard rule penolak ASPD)
+    lower_profil = (profil_warga or "").lower()
+    no_disability = all(kw in lower_profil for kw in [
+        "berjalan/tangga  : tidak mengalami kesulitan".lower(),
+        "mengurus diri    : tidak mengalami kesulitan".lower(),
+    ])
 
     data = parsed.copy()
     rekomendasi_raw = data.get("rekomendasi") if isinstance(data.get("rekomendasi"), list) else []
@@ -87,6 +95,9 @@ def enforce_program_eligibility_rules(parsed: dict, profil_warga: str) -> dict:
         current["nama_program"] = canonical
 
         is_pkh_plus = canonical == "PKH Plus (Lanjut Usia 70+)"
+        is_aspd = canonical == "Asistensi Sosial Penyandang Disabilitas (ASPD)"
+
+        # ── Guardrail PKH Plus: usia wajib ≥ 70 tahun ─────────────────
         if is_pkh_plus and age is not None and age < 70:
             alasan = (
                 f"Tidak memenuhi hard rule PKH Plus: usia warga {age} tahun, "
@@ -97,11 +108,25 @@ def enforce_program_eligibility_rules(parsed: dict, profil_warga: str) -> dict:
             add_tidak_sesuai(canonical, alasan)
             continue
 
+        # ── Guardrail PKH Plus: skor rendah ───────────────────────────
         if is_pkh_plus and skor_pkh is not None and float(skor_pkh) <= 0.05:
             add_tidak_sesuai(
                 canonical,
                 f"Tidak direkomendasikan karena skor PKH Plus dari profil adalah {skor_pkh}, "
                 "di bawah ambang prioritas."
+            )
+            continue
+
+        # ── Guardrail ASPD: tidak ada hambatan fungsi sama sekali ──────
+        # Jika profil secara eksplisit mencatat semua dimensi fungsional
+        # sebagai 'tidak mengalami kesulitan', warga tidak termasuk
+        # kategori penyandang disabilitas sesuai definisi juknis ASPD.
+        if is_aspd and no_disability and has_disability is False:
+            add_tidak_sesuai(
+                canonical,
+                "Tidak memenuhi hard rule ASPD: seluruh dimensi fungsional warga tercatat "
+                "'Tidak mengalami kesulitan'. Warga tidak masuk kategori penyandang disabilitas "
+                "sesuai kriteria Juklak ASPD 2026."
             )
             continue
 
@@ -201,24 +226,68 @@ def build_fallback_generation(
                 and desil is not None and desil <= 4
                 and status_dtsen and "aktif" in str(status_dtsen).lower()
             )
-            if not sintesis and inferred_layak:
+            if inferred_layak:
                 sintesis = (
-                    f"Warga berusia {umur} tahun, memenuhi batas lansia 70 tahun ke atas; "
-                    f"desil nasional {desil} masuk prioritas 1-4; status DTSEN aktif."
+                    f"Warga berusia {umur} tahun memenuhi syarat minimum lansia 70 tahun ke atas "
+                    f"sesuai Juknis PKH Plus 2026 Pasal Sasaran Penerima. "
+                    f"Desil nasional {desil} masuk klaster prioritas 1–4 dan status DTSEN tercatat aktif."
+                )
+            else:
+                # Buat alasan deterministik berdasarkan kondisi yang gagal
+                alasan_parts = []
+                if umur is not None and umur < 70:
+                    alasan_parts.append(
+                        f"usia warga {umur} tahun belum memenuhi syarat minimum 70 tahun "
+                        "yang ditetapkan Juknis PKH Plus 2026"
+                    )
+                elif umur is None:
+                    alasan_parts.append("data usia warga tidak terdeteksi dari profil")
+                if desil is not None and desil > 4:
+                    alasan_parts.append(
+                        f"desil nasional {desil} berada di luar klaster prioritas 1–4 PKH Plus"
+                    )
+                if not status_dtsen or "aktif" not in str(status_dtsen).lower():
+                    alasan_parts.append("status DTSEN tidak aktif atau tidak terdeteksi")
+                sintesis = (
+                    "Tidak memenuhi kriteria PKH Plus: " + "; ".join(alasan_parts) + "."
+                    if alasan_parts
+                    else "Profil warga tidak memenuhi kriteria sasaran PKH Plus (Lanjut Usia 70+)."
                 )
         elif key == "aspd":
+            has_dis = profile_signals.get("has_disability")
             inferred_layak = (
-                profile_signals.get("has_disability")
+                has_dis
                 and umur is not None and umur <= 60
                 and desil is not None and desil <= 5
             )
-            if not sintesis and inferred_layak:
+            if inferred_layak:
                 sintesis = (
-                    f"Warga memiliki indikasi hambatan fungsi/disabilitas, usia {umur} tahun "
-                    f"masuk rentang ASPD, dan desil nasional {desil} masuk prioritas."
+                    f"Warga memiliki indikasi hambatan fungsi/disabilitas yang tercatat pada profil, "
+                    f"usia {umur} tahun masuk rentang sasaran ASPD (hingga 60 tahun), "
+                    f"dan desil nasional {desil} masuk klaster prioritas sesuai Juklak ASPD 2026."
+                )
+            else:
+                alasan_parts = []
+                if not has_dis:
+                    alasan_parts.append(
+                        "tidak ditemukan indikasi hambatan fungsi/disabilitas pada profil warga "
+                        "(semua dimensi fungsional: 'Tidak mengalami kesulitan')"
+                    )
+                if umur is not None and umur > 60:
+                    alasan_parts.append(
+                        f"usia warga {umur} tahun melebihi batas atas sasaran ASPD"
+                    )
+                if desil is not None and desil > 5:
+                    alasan_parts.append(
+                        f"desil nasional {desil} berada di luar klaster prioritas ASPD"
+                    )
+                sintesis = (
+                    "Tidak memenuhi kriteria ASPD: " + "; ".join(alasan_parts) + "."
+                    if alasan_parts
+                    else "Profil warga tidak memenuhi kriteria sasaran ASPD berdasarkan data yang tersedia."
                 )
 
-        alasan = str(sintesis or "Tidak ada sintesis Tim 1 yang tersedia.")
+        alasan = str(sintesis)
         if score is not None:
             alasan = f"{alasan} Skor Tim 1: {score}."
 
