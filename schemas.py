@@ -66,17 +66,6 @@ class RecommendRequest(BaseModel):
         )
 
 
-class AskRequest(BaseModel):
-    query: str = Field(
-        ...,
-        min_length=5,
-        description="Pertanyaan terkait juknis/kebijakan bantuan sosial",
-        examples=["Apa syarat penerima PKH Plus untuk lanjut usia?"]
-    )
-    top_k: Optional[int] = Field(default=None, ge=5, le=100)
-    top_n: Optional[int] = Field(default=None, ge=1, le=20)
-
-
 class RetrieveOnlyRequest(BaseModel):
     model_config = {
         "json_schema_extra": {
@@ -219,19 +208,6 @@ class RecommendResponse(BaseModel):
     program_count: int
     elapsed_ms: int
     model_used: str
-
-
-class AskResponse(BaseModel):
-    jawaban: str
-    sumber_digunakan: list[str]
-    poin_penting: list[str]
-    catatan: Optional[str] = None
-    # Metadata pipeline
-    sources: list[SourceDocument]
-    retrieval_count: int
-    elapsed_ms: int
-    model_used: str
-
 
 class HealthResponse(BaseModel):
     status: str

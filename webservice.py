@@ -179,10 +179,10 @@ app.add_middleware(
 # ============================================================
 
 from schemas import (
-    RecommendRequest, AskRequest, RetrieveOnlyRequest,
+    RecommendRequest, RetrieveOnlyRequest,
     RekomendasiProgram, ProgramTidakSesuai,
     RetrieveChunkResult, RetrieveOnlyResponse,
-    RecommendResponse, AskResponse, HealthResponse, ProgramInfo
+    RecommendResponse, HealthResponse, ProgramInfo
 )
 
 from helpers import (
@@ -472,70 +472,6 @@ def recommend(req: RecommendRequest):
     except Exception as e:
         logger.error("❌ /recommend error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
-
-
-@app.post("/ask", response_model=AskResponse, tags=["RAG"],
-          summary="Tanya juknis/kebijakan bantuan sosial secara bebas")
-def ask(req: AskRequest):
-    """
-    **Mode 2: Tanya Juknis Bebas (JSON Terstruktur)**
-
-    Contoh pertanyaan:
-    - "Apa syarat penerima ASPD?"
-    - "Berapa nominal bantuan PKH Plus per bulan?"
-    - "Bagaimana mekanisme pencairan KIP Putri JAWARA?"
-
-    **Response mencakup:**
-    - `jawaban` — jawaban lengkap berdasarkan dokumen
-    - `sumber_digunakan[]` — nama dokumen yang dirujuk
-    - `poin_penting[]` — ringkasan dalam poin-poin
-    - `sources[]` — metadata chunk untuk audit
-    """
-    check_ready(require_llm=True)
-    t0 = time.time()
-
-    try:
-        top_k = req.top_k or RETRIEVAL_TOP_K
-        top_n = req.top_n or top_k
-
-        # RERANKER OFF: jalur lama memakai Cross-Encoder reranking.
-        # results = state.retriever.retrieve(req.query, top_k=top_k, top_n=top_n)
-        results = retrieve_semantic_only(req.query, top_k=top_k, top_n=top_n)
-
-        if not results:
-            raise HTTPException(status_code=404,
-                detail="Tidak ada dokumen relevan ditemukan untuk pertanyaan tersebut.")
-
-        context = build_context_flat(results)
-
-        final_prompt = PROMPT_TEMPLATE.format(
-            system_prompt=JSON_ASK_SYSTEM_PROMPT,
-            context=context,
-            query=req.query,
-        )
-
-        parsed = invoke_llm(final_prompt)
-        raise_if_parse_error(parsed)
-
-        elapsed_ms = int((time.time() - t0) * 1000)
-
-        return AskResponse(
-            jawaban=parsed.get("jawaban", ""),
-            sumber_digunakan=parsed.get("sumber_digunakan", []),
-            poin_penting=parsed.get("poin_penting", []),
-            catatan=parsed.get("catatan"),
-            sources=to_source_docs(results),
-            retrieval_count=len(results),
-            elapsed_ms=elapsed_ms,
-            model_used=RUNPOD_MODEL_NAME,
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("❌ /ask error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
-
 
 @app.post("/retrieve", response_model=RetrieveOnlyResponse, tags=["Retrieval"],
           summary="Ambil hasil retrieval semantic search tanpa LLM generation")
