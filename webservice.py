@@ -126,7 +126,7 @@ async def lifespan(app: FastAPI):
         state.startup_time = round(time.time() - t0, 2)
         
         # Dapatkan IP publik secara opsional untuk visualisasi akses eksternal di VPS
-        ip = "0.0.0.0"
+        ip = "[IP_ADDRESS]"
         port = "8002"
         try:
             with httpx.Client(timeout=2.0) as client:
@@ -138,6 +138,7 @@ async def lifespan(app: FastAPI):
 
         if ip != "0.0.0.0":
             logger.info(f"✅ Retrieval siap dalam {state.startup_time:.2f}s. Service dapat diakses secara eksternal di: http://{ip}:{port}")
+            logger.info(f"✅ Swagger siap diakses di: http://{ip}:{port}/docs")
         else:
             logger.info(f"✅ Retrieval siap dalam {state.startup_time:.2f}s. Generation memakai API RunPod.")
     except Exception as e:
