@@ -29,8 +29,6 @@ from config import (
     RETRIEVAL_TOP_K, RERANK_TOP_N,
     RUNPOD_MODEL_NAME,
     configure_utf8_stdio,
-    FEW_SHOT_USER_EXAMPLE,
-    FEW_SHOT_ASSISTANT_EXAMPLE,
 )
 
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
@@ -371,12 +369,12 @@ def recommend(req: RecommendRequest):
             else:
                 user_prompt += (
                     "INSTRUKSI EKSEKUSI:\n"
-                    "1. Isi JSON dengan data konkret dari profil warga dan konteks dokumen.\n"
-                    "2. Jika warga lansia 70+ dan desil/DTSEN memenuhi, prioritaskan evaluasi PKH Plus.\n"
-                    "3. Jika umur warga kurang dari 70 tahun, PKH Plus wajib TIDAK_ELIGIBLE.\n"
-                    "4. Jika warga memiliki hambatan fungsi/disabilitas dan usia memenuhi, evaluasi ASPD.\n"
+                    "1. Lakukan audit kelayakan secara objektif dengan mencocokkan kriteria pada Profil Warga terhadap aturan di Konteks Dokumen.\n"
+                    "2. Hasilkan output TEPAT dalam format Toon dengan empat kategori wajib: 'ringkasan_profil', 'rekomendasi', 'rekomendasi_teknis_bansos', dan 'program_tidak_sesuai'.\n"
+                    "3. Pada baris 'rekomendasi', Anda wajib memuat informasi: rank, dasar hukum, dan alasan kelayakan di dalam kolom Detail/Alasan.\n"
+                    "4. Pada baris 'rekomendasi_teknis_bansos', jabarkan rencana aksi operasional, prioritas pemanfaatan dana, mekanisme pendampingan, pengelola bantuan, serta monitoring evaluasi warga di lapangan.\n"
                     "5. Program yang tidak cocok harus masuk program_tidak_sesuai dengan alasan spesifik.\n"
-                    "6. Respons hanya JSON valid. Jangan memakai markdown, heading, atau placeholder."
+                    "6. Respons hanya berupa teks format Toon valid. Jangan memakai markdown, heading, atau placeholder."
                 )
         else:
             user_prompt = (
@@ -387,18 +385,16 @@ def recommend(req: RecommendRequest):
                 f"{context}\n"
                 "=== AKHIR KONTEKS DOKUMEN ===\n\n"
                 "INSTRUKSI EKSEKUSI:\n"
-                "1. Isi JSON dengan data konkret dari profil warga dan konteks dokumen.\n"
-                "2. Jika warga lansia 70+ dan desil/DTSEN memenuhi, prioritaskan evaluasi PKH Plus.\n"
-                "3. Jika umur warga kurang dari 70 tahun, PKH Plus wajib TIDAK_ELIGIBLE.\n"
-                "4. Jika warga memiliki hambatan fungsi/disabilitas dan usia memenuhi, evaluasi ASPD.\n"
+                "1. Lakukan audit kelayakan secara objektif dengan mencocokkan kriteria pada Profil Warga terhadap aturan di Konteks Dokumen.\n"
+                "2. Hasilkan output TEPAT dalam format Toon dengan empat kategori wajib: 'ringkasan_profil', 'rekomendasi', 'rekomendasi_teknis_bansos', dan 'program_tidak_sesuai'.\n"
+                "3. Pada baris 'rekomendasi', Anda wajib memuat informasi: rank, dasar hukum, dan alasan kelayakan di dalam kolom Detail/Alasan.\n"
+                "4. Pada baris 'rekomendasi_teknis_bansos', jabarkan rencana aksi operasional, prioritas pemanfaatan dana, mekanisme pendampingan, pengelola bantuan, serta monitoring evaluasi warga di lapangan.\n"
                 "5. Program yang tidak cocok harus masuk program_tidak_sesuai dengan alasan spesifik.\n"
-                "6. Respons hanya JSON valid. Jangan memakai markdown, heading, atau placeholder.\n"
+                "6. Respons hanya berupa teks format Toon valid. Jangan memakai markdown, heading, atau placeholder.\n"
             )
 
         generation_messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": FEW_SHOT_USER_EXAMPLE},
-            {"role": "assistant", "content": FEW_SHOT_ASSISTANT_EXAMPLE},
             {"role": "user", "content": user_prompt},
         ]
 

@@ -108,7 +108,7 @@ TIM1_API_TIMEOUT_S = float(os.getenv("TIM1_API_TIMEOUT_S", "120"))
 RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY", "").strip().strip('"').strip("'")
 RUNPOD_MODEL_NAME = DEFAULT_GENERATION_MODEL.strip().strip('"').strip("'")
 RUNPOD_TEMPERATURE = DEFAULT_TEMPERATURE
-RUNPOD_MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))
+RUNPOD_MAX_TOKENS = int(os.getenv("MAX_TOKENS", "2048"))
 
 # ============================================================
 # FEW-SHOT EXAMPLES (TOON format)

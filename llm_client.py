@@ -240,6 +240,9 @@ def call_runpod_chat_api(api_url: str, messages: list[dict]) -> str:
         "messages": messages,
         "temperature": RUNPOD_TEMPERATURE,
         "max_tokens": RUNPOD_MAX_TOKENS,
+        "extra_body": {
+                "enable_thinking": False
+        }
     }
     headers = {
         "Content-Type": "application/json",
