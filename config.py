@@ -65,7 +65,7 @@ CHUNKED_DIR = str(BASE_DIR / "chunked_data")
 # ============================================================
 QDRANT_DIR = str(BASE_DIR / "qdrant_db")
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
-QDRANT_COLLECTION = 'juknis-juklak-mkn3'
+QDRANT_COLLECTION = 'juknis-juklak-filtered'
 
 # --- Model untuk LOCAL DEVELOPMENT ---
 EMBED_MODEL_NAME = 'intfloat/multilingual-e5-large' # model bawaan fastembed dari qdrant

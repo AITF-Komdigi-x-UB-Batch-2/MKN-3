@@ -55,8 +55,11 @@ def ingest(collection_name: str):
                 if not line.strip():
                     continue
                 data_row = json.loads(line)
+                meta = data_row.get('metadata', {})
+                if meta.get('retrieval_priority') == 'low':
+                    continue
                 documents.append(data_row['text'])
-                metadata.append(data_row['metadata'])
+                metadata.append(meta)
 
         # pake payload indexing di kategori biar optimise filtering
         client.create_payload_index(
