@@ -10,8 +10,8 @@ from tqdm.asyncio import tqdm_asyncio
 
 # Target API endpoint
 DEFAULT_API_URL = "http://localhost:8002/retrieve"
-DEFAULT_INPUT = "eval_queries.jsonl" # ini harus diganti buat beda file 
-DEFAULT_OUTPUT = "retrieval_results_eval.jsonl" # ini juga
+DEFAULT_INPUT = "train_queries.jsonl" # ini harus diganti buat beda file 
+DEFAULT_OUTPUT = "retrieval_results_train.jsonl" # ini juga
 
 def extract_nik(query_profil: str) -> str:
     """Extract NIK from the query profile text."""

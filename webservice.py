@@ -192,6 +192,7 @@ from helpers import (
     to_source_docs,
     infer_retrieval_sources_from_profile,
     retrieval_prompt_for_sources,
+    is_profile_query,
 )
 
 from llm_client import (
@@ -497,14 +498,22 @@ def retrieve_only(req: RetrieveOnlyRequest):
         top_k = req.top_k or RETRIEVAL_TOP_K
         top_n = req.top_n or top_k
 
-        # ── Step 1: Parse content → keyword query padat ─────────────────────
-        effective_query = _parse_content_to_retrieval_query(req.content)
-        inferred_sources = infer_retrieval_sources_from_profile(req.content)
+        # ── Step 1: Detect if content is a profile query ────────────────────
+        is_profile = is_profile_query(req.content)
 
-        # ── Step 2: Gabungkan prompt retrieval sesuai program target ────────
-        retrieval_prompt = retrieval_prompt_for_sources(inferred_sources)
-        if retrieval_prompt and retrieval_prompt.strip():
-            effective_query = f"{retrieval_prompt.strip()}\n\n{effective_query}"
+        if is_profile:
+            # ── Step 1a: Parse content → keyword query padat ─────────────────────
+            effective_query = _parse_content_to_retrieval_query(req.content)
+            inferred_sources = infer_retrieval_sources_from_profile(req.content)
+
+            # ── Step 2: Gabungkan prompt retrieval sesuai program target ────────
+            retrieval_prompt = retrieval_prompt_for_sources(inferred_sources)
+            if retrieval_prompt and retrieval_prompt.strip():
+                effective_query = f"{retrieval_prompt.strip()}\n\n{effective_query}"
+        else:
+            # Jika merupakan kueri pencarian bebas (ad-hoc), gunakan kueri asli apa adanya
+            effective_query = req.content.strip()
+            inferred_sources = None
 
         logger.info("🔎 /retrieve effective_query (200 chars): %s", effective_query[:200])
 

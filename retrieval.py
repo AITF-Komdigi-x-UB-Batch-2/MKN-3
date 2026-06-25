@@ -128,7 +128,7 @@ class PolicyRetriever:
         # ── Semantic search ──────────────────────────────────
         logger.debug("🔎 Semantic-only search limit=%d ...", top_k)
         embedder_model = self.client._model_embedder.embedder.get_or_init_model(config.EMBED_MODEL_NAME)
-        query_vector = list(embedder_model.embed([query]))[0].tolist()
+        query_vector = list(embedder_model.embed([f"query: {query}"]))[0].tolist()
 
         hits = self.client.query_points(
             collection_name=self.collection,
@@ -136,6 +136,7 @@ class PolicyRetriever:
             using=self.vector_name,
             limit=top_k,
             query_filter=qdrant_filter,
+            score_threshold=0.8
         ).points
         
         if not hits:
@@ -179,7 +180,7 @@ class PolicyRetriever:
 
         # Lakukan search dengan limit=1 menggunakan query vector statis bertema nominal
         embedder_model = self.client._model_embedder.embedder.get_or_init_model(config.EMBED_MODEL_NAME)
-        query_vector = list(embedder_model.embed(["nominal besaran bantuan dana tahap"]))[0].tolist()
+        query_vector = list(embedder_model.embed(["query: nominal besaran bantuan dana tahap"]))[0].tolist()
 
         hits = self.client.query_points(
             collection_name=self.collection,
@@ -187,6 +188,7 @@ class PolicyRetriever:
             using=self.vector_name,
             limit=1,
             query_filter=qdrant_filter,
+            score_threshold=0.8
         ).points
 
         results = []

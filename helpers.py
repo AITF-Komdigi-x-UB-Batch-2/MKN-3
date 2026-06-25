@@ -226,6 +226,39 @@ def parse_profile_signals(profil_warga: str) -> dict:
     }
 
 
+def is_profile_query(content: str) -> bool:
+    """
+    Mendeteksi apakah kueri input merupakan data profil warga atau kueri pencarian bebas (ad-hoc).
+    """
+    if not content or not content.strip():
+        return False
+
+    signals = parse_profile_signals(content)
+    # Jika kita berhasil mem-parsing minimal satu informasi profil utama
+    has_signals = (
+        signals.get("umur") is not None
+        or signals.get("desil_nasional") is not None
+        or signals.get("status_dtsen") is not None
+        or signals.get("has_disability") is True
+    )
+    if has_signals:
+        return True
+
+    lower_content = content.lower()
+    # Deteksi jika ada keyword khusus data profil warga
+    if any(kw in lower_content for kw in ["nik", "nama", "no. kk", "kepala keluarga"]):
+        return True
+
+    # Deteksi jika memiliki baris-baris berstruktur key-value
+    lines = [line.strip() for line in content.split("\n") if line.strip()]
+    if len(lines) > 2:
+        kv_lines = sum(1 for line in lines if ":" in line or "-" in line)
+        if kv_lines / len(lines) > 0.5:
+            return True
+
+    return False
+
+
 def infer_retrieval_sources_from_profile(content: str) -> Optional[list[str]]:
     signals = parse_profile_signals(content)
     age = signals.get("umur")
