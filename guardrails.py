@@ -13,6 +13,11 @@ from helpers import (
 
 logger = logging.getLogger(__name__)
 
+PKH_PLUS_PROGRAM = "PKH Plus (Lanjut Usia 70+)"
+PKH_PLUS_SOURCE = "JUKNIS PKH PLUS 2026.pdf"
+ASPD_PROGRAM = "Asistensi Sosial Penyandang Disabilitas (ASPD)"
+ASPD_SOURCE = "Juklak ASPD Tahun 202620260225_12303533_01.pdf"
+
 
 def tim1_is_layak(item: object) -> bool:
     if not isinstance(item, dict):
@@ -20,6 +25,97 @@ def tim1_is_layak(item: object) -> bool:
     status = str(item.get("status_kelayakan") or "").upper()
     label = item.get("label")
     return ("LAYAK" in status and "TIDAK" not in status) or label == 1
+
+
+def _status_is_active(value: object) -> bool | None:
+    if value is None:
+        return None
+    text = str(value).lower()
+    if not text.strip():
+        return None
+    if "tidak aktif" in text or "nonaktif" in text or "non aktif" in text:
+        return False
+    if "aktif" in text:
+        return True
+    return None
+
+
+def _evaluate_program_rules(profil_warga: str) -> dict[str, dict]:
+    """
+    Evaluasi hard rule program dari profil. Hasil ini dipakai setelah LLM,
+    sehingga keputusan akhir tidak bergantung penuh pada generasi model.
+    """
+    signals = parse_profile_signals(profil_warga)
+    age = signals.get("umur")
+    desil = signals.get("desil_nasional")
+    status_active = _status_is_active(signals.get("status_dtsen"))
+    has_disability = bool(signals.get("has_disability"))
+
+    pkh_failures = []
+    if age is None:
+        pkh_failures.append("usia warga tidak terdeteksi")
+    elif age < 70:
+        pkh_failures.append(
+            f"usia warga {age} tahun belum memenuhi syarat PKH Plus 70 tahun ke atas"
+        )
+    if desil is None:
+        pkh_failures.append("desil nasional tidak terdeteksi")
+    elif desil > 4:
+        pkh_failures.append(
+            f"desil nasional {desil} berada di luar sasaran PKH Plus desil 1-4"
+        )
+    if status_active is False:
+        pkh_failures.append("status DTSEN tercatat tidak aktif")
+
+    aspd_failures = []
+    if age is None:
+        aspd_failures.append("usia warga tidak terdeteksi")
+    elif age > 60:
+        aspd_failures.append(
+            f"usia warga {age} tahun melebihi batas sasaran ASPD maksimal 60 tahun"
+        )
+    if desil is None:
+        aspd_failures.append("desil nasional tidak terdeteksi")
+    elif desil > 5:
+        aspd_failures.append(
+            f"desil nasional {desil} berada di luar prioritas utama ASPD desil 1-5"
+        )
+    if not has_disability:
+        aspd_failures.append(
+            "tidak terdeteksi hambatan fungsi berat seperti banyak kesulitan, "
+            "sama sekali tidak bisa, tidak mampu, atau membutuhkan bantuan"
+        )
+    if status_active is False:
+        aspd_failures.append("status DTSEN tercatat tidak aktif")
+
+    pkh_eligible = not pkh_failures
+    aspd_eligible = not aspd_failures
+
+    pkh_reason = (
+        f"Warga memenuhi hard rule PKH Plus: usia {age} tahun, desil nasional {desil}, "
+        "dan status DTSEN tidak tercatat bermasalah."
+        if pkh_eligible
+        else "Tidak memenuhi hard rule PKH Plus: " + "; ".join(pkh_failures) + "."
+    )
+    aspd_reason = (
+        f"Warga memenuhi hard rule ASPD: usia {age} tahun berada dalam rentang maksimal 60 tahun, "
+        f"desil nasional {desil} masuk prioritas 1-5, dan profil mencatat hambatan fungsi berat."
+        if aspd_eligible
+        else "Tidak memenuhi hard rule ASPD: " + "; ".join(aspd_failures) + "."
+    )
+
+    return {
+        PKH_PLUS_PROGRAM: {
+            "eligible": pkh_eligible,
+            "source": PKH_PLUS_SOURCE,
+            "reason": pkh_reason,
+        },
+        ASPD_PROGRAM: {
+            "eligible": aspd_eligible,
+            "source": ASPD_SOURCE,
+            "reason": aspd_reason,
+        },
+    }
 
 
 def enforce_program_eligibility_rules(parsed: dict, profil_warga: str) -> dict:
@@ -30,18 +126,7 @@ def enforce_program_eligibility_rules(parsed: dict, profil_warga: str) -> dict:
     if not isinstance(parsed, dict):
         return parsed
 
-    signals = parse_profile_signals(profil_warga)
-    age = signals.get("umur")
-    skor_pkh = signals.get("skor_pkh_plus")
-    has_disability = signals.get("has_disability")  # True/False/None
-
-    # Deteksi eksplisit: semua dimensi fungsional = "tidak mengalami kesulitan"
-    # (digunakan sebagai hard rule penolak ASPD)
-    lower_profil = (profil_warga or "").lower()
-    no_disability = all(kw in lower_profil for kw in [
-        "berjalan/tangga  : tidak mengalami kesulitan".lower(),
-        "mengurus diri    : tidak mengalami kesulitan".lower(),
-    ])
+    rules = _evaluate_program_rules(profil_warga)
 
     data = parsed.copy()
     rekomendasi_raw = data.get("rekomendasi") if isinstance(data.get("rekomendasi"), list) else []
@@ -59,6 +144,10 @@ def enforce_program_eligibility_rules(parsed: dict, profil_warga: str) -> dict:
         canonical = normalize_program_name(program_name)
         if canonical not in allowed_programs:
             return
+        rekomendasi[:] = [
+            item for item in rekomendasi
+            if normalize_program_name(str(item.get("nama_program") or "")) != canonical
+        ]
         for item in tidak_sesuai:
             if normalize_program_name(str(item.get("nama_program") or "")) == canonical:
                 item["nama_program"] = canonical
@@ -71,16 +160,39 @@ def enforce_program_eligibility_rules(parsed: dict, profil_warga: str) -> dict:
             "alasan": alasan,
         })
 
+    def add_rekomendasi(program_name: str, source: str, alasan: str, status: str = "ELIGIBLE"):
+        canonical = normalize_program_name(program_name)
+        if canonical not in allowed_programs:
+            return
+        tidak_sesuai[:] = [
+            item for item in tidak_sesuai
+            if normalize_program_name(str(item.get("nama_program") or "")) != canonical
+        ]
+        for item in rekomendasi:
+            if normalize_program_name(str(item.get("nama_program") or "")) == canonical:
+                item["nama_program"] = canonical
+                item["status"] = status
+                item["sumber"] = item.get("sumber") or source
+                item["alasan_kelayakan"] = alasan
+                return
+        rekomendasi.append({
+            "rank": len(rekomendasi) + 1,
+            "nama_program": canonical,
+            "status": status,
+            "sumber": source,
+            "alasan_kelayakan": alasan,
+        })
+
     # Filter program_tidak_sesuai dari LLM agar hanya menyertakan program yang diizinkan
     for item in tidak_sesuai_raw:
         if not isinstance(item, dict):
             continue
         canonical = normalize_program_name(str(item.get("nama_program") or ""))
-        if canonical in allowed_programs:
+        if canonical in allowed_programs and not rules.get(canonical, {}).get("eligible"):
             tidak_sesuai.append({
                 "nama_program": canonical,
                 "status": "TIDAK_ELIGIBLE",
-                "alasan": item.get("alasan") or "Tidak memenuhi kriteria program.",
+                "alasan": rules.get(canonical, {}).get("reason") or item.get("alasan") or "Tidak memenuhi kriteria program.",
             })
 
     for item in rekomendasi_raw:
@@ -94,43 +206,27 @@ def enforce_program_eligibility_rules(parsed: dict, profil_warga: str) -> dict:
 
         current["nama_program"] = canonical
 
-        is_pkh_plus = canonical == "PKH Plus (Lanjut Usia 70+)"
-        is_aspd = canonical == "Asistensi Sosial Penyandang Disabilitas (ASPD)"
-
-        # ── Guardrail PKH Plus: usia wajib ≥ 70 tahun ─────────────────
-        if is_pkh_plus and age is not None and age < 70:
-            alasan = (
-                f"Tidak memenuhi hard rule PKH Plus: usia warga {age} tahun, "
-                "sedangkan sasaran PKH Plus adalah lanjut usia 70 tahun ke atas."
-            )
-            if skor_pkh is not None:
-                alasan += f" Skor PKH Plus dari profil: {skor_pkh}."
-            add_tidak_sesuai(canonical, alasan)
+        rule = rules.get(canonical)
+        if rule and not rule["eligible"]:
+            add_tidak_sesuai(canonical, rule["reason"])
             continue
 
-        # ── Guardrail PKH Plus: skor rendah ───────────────────────────
-        if is_pkh_plus and skor_pkh is not None and float(skor_pkh) <= 0.05:
-            add_tidak_sesuai(
-                canonical,
-                f"Tidak direkomendasikan karena skor PKH Plus dari profil adalah {skor_pkh}, "
-                "di bawah ambang prioritas."
-            )
-            continue
-
-        # ── Guardrail ASPD: tidak ada hambatan fungsi sama sekali ──────
-        # Jika profil secara eksplisit mencatat semua dimensi fungsional
-        # sebagai 'tidak mengalami kesulitan', warga tidak termasuk
-        # kategori penyandang disabilitas sesuai definisi juknis ASPD.
-        if is_aspd and no_disability and has_disability is False:
-            add_tidak_sesuai(
-                canonical,
-                "Tidak memenuhi hard rule ASPD: seluruh dimensi fungsional warga tercatat "
-                "'Tidak mengalami kesulitan'. Warga tidak masuk kategori penyandang disabilitas "
-                "sesuai kriteria Juklak ASPD 2026."
-            )
+        if rule and rule["eligible"]:
+            current["status"] = "ELIGIBLE"
+            current["sumber"] = current.get("sumber") or rule["source"]
+            current["alasan_kelayakan"] = rule["reason"]
+            add_rekomendasi(canonical, current["sumber"], current["alasan_kelayakan"])
             continue
 
         rekomendasi.append(current)
+
+    # LLM kadang salah memasukkan program yang memenuhi hard rule ke
+    # program_tidak_sesuai. Koreksi deterministik dilakukan di tahap akhir.
+    for program_name, rule in rules.items():
+        if rule["eligible"]:
+            add_rekomendasi(program_name, rule["source"], rule["reason"])
+        else:
+            add_tidak_sesuai(program_name, rule["reason"])
 
     for idx, item in enumerate(rekomendasi, 1):
         item["rank"] = idx

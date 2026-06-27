@@ -12,6 +12,34 @@ from llm_client import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
+SEVERE_DISABILITY_TERMS = [
+    "banyak kesulitan",
+    "tidak bisa",
+    "sama sekali tidak bisa",
+    "tidak mampu",
+    "membutuhkan bantuan",
+    "disabilitas",
+    "bedridden",
+    "bed ridden",
+]
+NON_DISABILITY_TERMS = [
+    "tidak mengalami kesulitan",
+    "sedikit kesulitan, tapi tidak membutuhkan bantuan",
+    "tidak membutuhkan bantuan",
+    "tidak ada disabilitas",
+    "bukan penyandang disabilitas",
+]
+
+
+def _value_has_severe_disability(value: object) -> bool:
+    text = str(value or "").lower()
+    if not text.strip():
+        return False
+    return (
+        any(term in text for term in SEVERE_DISABILITY_TERMS)
+        and not any(term in text for term in NON_DISABILITY_TERMS)
+    )
+
 
 def _unwrap_profile_text(content: str) -> str:
     """
@@ -209,6 +237,63 @@ def parse_profile_signals(profil_warga: str) -> dict:
     text = _unwrap_profile_text(profil_warga or "")
     lower = text.lower()
 
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        data = None
+
+    if isinstance(data, dict):
+        laporan = data.get("laporan_evaluasi") if isinstance(data.get("laporan_evaluasi"), dict) else {}
+        profil_raw = laporan.get("profil_warga") if isinstance(laporan.get("profil_warga"), dict) else {}
+        parameter = laporan.get("parameter") if isinstance(laporan.get("parameter"), dict) else {}
+        analisis = laporan.get("analisis") if isinstance(laporan.get("analisis"), dict) else {}
+        skor = laporan.get("skor") if isinstance(laporan.get("skor"), dict) else {}
+
+        if not profil_raw:
+            profil_raw = data.get("profil_warga") if isinstance(data.get("profil_warga"), dict) else data
+        if not parameter:
+            parameter = data.get("parameter") if isinstance(data.get("parameter"), dict) else data
+        if not analisis:
+            analisis = data.get("analisis") if isinstance(data.get("analisis"), dict) else {}
+        if not skor:
+            skor = data.get("skor") if isinstance(data.get("skor"), dict) else {}
+
+        def as_int(value: object) -> int | None:
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        age_json = as_int(profil_raw.get("umur") or data.get("umur"))
+        desil_json = as_int(parameter.get("desil_nasional") or data.get("desil_nasional"))
+        status_json = (
+            profil_raw.get("status_dtsen")
+            or parameter.get("status_dtsen")
+            or parameter.get("status_dtsekolah")
+            or data.get("status_dtsen")
+            or data.get("status_dtsekolah")
+        )
+        lokasi_json = profil_raw.get("wilayah") or parameter.get("lokasi") or data.get("lokasi")
+        if isinstance(lokasi_json, dict):
+            lokasi_json = ", ".join(str(v) for v in lokasi_json.values() if v)
+
+        dis_obj = parameter.get("disabilitas") or data.get("disabilitas") or {}
+        has_disability_json = False
+        if isinstance(dis_obj, dict):
+            has_disability_json = any(_value_has_severe_disability(v) for v in dis_obj.values())
+        if not has_disability_json:
+            has_disability_json = _value_has_severe_disability(analisis.get("disabilitas_fungsi"))
+
+        return {
+            "umur": age_json,
+            "desil_nasional": desil_json,
+            "status_dtsen": str(status_json).strip() if status_json is not None else None,
+            "lokasi": str(lokasi_json).strip() if lokasi_json else None,
+            "has_disability": has_disability_json,
+            "skor_pkh_plus": skor.get("skor_pkh_plus"),
+            "skor_aspd": skor.get("skor_aspd"),
+        }
+
     def number(pattern: str, cast=float):
         match = re.search(pattern, text, re.IGNORECASE)
         if not match:
@@ -234,22 +319,6 @@ def parse_profile_signals(profil_warga: str) -> dict:
     if lokasi_match:
         lokasi = lokasi_match.group(1).strip()
 
-    severe_disability_terms = [
-        "banyak kesulitan",
-        "tidak bisa",
-        "sama sekali tidak bisa",
-        "tidak mampu",
-        "membutuhkan bantuan",
-        "disabilitas",
-        "bedridden",
-        "bed ridden",
-    ]
-    non_disability_terms = [
-        "tidak mengalami kesulitan",
-        "sedikit kesulitan, tapi tidak membutuhkan bantuan",
-        "tidak membutuhkan bantuan",
-    ]
-
     function_values = []
     for line in text.splitlines():
         for segment in line.split("|"):
@@ -257,15 +326,9 @@ def parse_profile_signals(profil_warga: str) -> dict:
                 continue
             function_values.append(segment.split(":", 1)[1].strip().lower())
     if function_values:
-        has_disability = any(
-            any(term in value for term in severe_disability_terms)
-            and not any(term in value for term in non_disability_terms)
-            for value in function_values
-        )
+        has_disability = any(_value_has_severe_disability(value) for value in function_values)
     else:
-        has_disability = any(term in lower for term in severe_disability_terms) and not all(
-            term in lower for term in non_disability_terms[:2]
-        )
+        has_disability = _value_has_severe_disability(lower)
 
     return {
         "umur": age,
@@ -273,6 +336,8 @@ def parse_profile_signals(profil_warga: str) -> dict:
         "status_dtsen": status_dtsen,
         "lokasi": lokasi,
         "has_disability": has_disability,
+        "skor_pkh_plus": number(r"skor\s+pkh\s*(?:plus|\+)?\s*[:\-]?\s*([0-9.]+)", float),
+        "skor_aspd": number(r"skor\s+aspd\s*[:\-]?\s*([0-9.]+)", float),
     }
 
 
