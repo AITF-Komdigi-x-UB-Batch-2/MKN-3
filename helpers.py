@@ -12,6 +12,35 @@ from llm_client import parse_llm_json
 
 logger = logging.getLogger(__name__)
 
+
+def _unwrap_profile_text(content: str) -> str:
+    """
+    Terima profil mentah atau payload chat JSON/JSONL, lalu kembalikan teks
+    profil yang benar-benar perlu diparsing.
+    """
+    if not content:
+        return ""
+
+    text = str(content).strip()
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return text
+
+    if isinstance(data, dict):
+        if isinstance(data.get("content"), str):
+            return data["content"].strip()
+
+        messages = data.get("messages")
+        if isinstance(messages, list):
+            for msg in messages:
+                if isinstance(msg, dict) and msg.get("role") == "user":
+                    msg_content = msg.get("content") or msg.get("query")
+                    if isinstance(msg_content, str) and msg_content.strip():
+                        return msg_content.strip()
+
+    return text
+
 # ============================================================
 # RETRIEVE SYSTEM PROMPT
 # ============================================================
@@ -57,6 +86,7 @@ def _parse_content_to_retrieval_query(content: str) -> str:
     `laporan_evaluasi.profil_warga` atau `parameter`).
     Jika gagal di-parse (bukan JSON), fallback ke logika Regex yang sudah ada.
     """
+    content = _unwrap_profile_text(content)
     parts: list[str] = []
 
     # ── [Bug 2 Fix] Coba safe-load sebagai JSON terlebih dahulu ──────────
@@ -176,7 +206,7 @@ def _parse_content_to_retrieval_query(content: str) -> str:
 
 
 def parse_profile_signals(profil_warga: str) -> dict:
-    text = profil_warga or ""
+    text = _unwrap_profile_text(profil_warga or "")
     lower = text.lower()
 
     def number(pattern: str, cast=float):
@@ -204,18 +234,38 @@ def parse_profile_signals(profil_warga: str) -> dict:
     if lokasi_match:
         lokasi = lokasi_match.group(1).strip()
 
-    no_disability = all(kw in lower for kw in [
-        "berjalan/tangga  : tidak mengalami kesulitan".lower(),
-        "mengurus diri    : tidak mengalami kesulitan".lower(),
-    ])
-    has_disability = any(kw in lower for kw in [
+    severe_disability_terms = [
         "banyak kesulitan",
         "tidak bisa",
+        "sama sekali tidak bisa",
+        "tidak mampu",
         "membutuhkan bantuan",
         "disabilitas",
         "bedridden",
         "bed ridden",
-    ]) and not no_disability
+    ]
+    non_disability_terms = [
+        "tidak mengalami kesulitan",
+        "sedikit kesulitan, tapi tidak membutuhkan bantuan",
+        "tidak membutuhkan bantuan",
+    ]
+
+    function_values = []
+    for line in text.splitlines():
+        for segment in line.split("|"):
+            if ":" not in segment:
+                continue
+            function_values.append(segment.split(":", 1)[1].strip().lower())
+    if function_values:
+        has_disability = any(
+            any(term in value for term in severe_disability_terms)
+            and not any(term in value for term in non_disability_terms)
+            for value in function_values
+        )
+    else:
+        has_disability = any(term in lower for term in severe_disability_terms) and not all(
+            term in lower for term in non_disability_terms[:2]
+        )
 
     return {
         "umur": age,
@@ -272,7 +322,7 @@ def infer_retrieval_sources_from_profile(content: str) -> Optional[list[str]]:
         and age >= 70
         and (desil is None or int(desil) <= 4)
     )
-    aspd_profile_match = has_disability
+    aspd_profile_match = has_disability and (age is None or int(age) <= 60)
 
     if aspd_profile_match:
         target_sources.append("Juklak ASPD Tahun 202620260225_12303533_01.pdf")

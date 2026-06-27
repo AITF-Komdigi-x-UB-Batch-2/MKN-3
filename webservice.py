@@ -242,6 +242,67 @@ def retrieve_semantic_only(
     return results[:top_n]
 
 
+def profile_has_no_existing_bansos(profil_warga: str) -> bool:
+    """
+    Deteksi profil warga yang eksplisit belum/tidak menerima bansos apapun.
+    Mendukung format teks key-value seperti "Bansos: -" dan JSON sederhana.
+    """
+    text = profil_warga or ""
+
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        data = None
+
+    def is_empty_bansos(value: object) -> bool:
+        if value is None:
+            return True
+        if isinstance(value, list):
+            return len(value) == 0
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return normalized in {
+                "",
+                "-",
+                "[]",
+                "null",
+                "none",
+                "tidak ada",
+                "belum ada",
+                "belum menerima",
+                "belum mendapatkan",
+                "tidak menerima",
+            }
+        return False
+
+    def find_bansos_value(value: object) -> object:
+        if isinstance(value, dict):
+            for key, item in value.items():
+                key_norm = str(key).strip().lower()
+                if key_norm in {"bansos", "bantuan_sosial", "bantuan sosial"}:
+                    return item
+                found = find_bansos_value(item)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for item in value:
+                found = find_bansos_value(item)
+                if found is not None:
+                    return found
+        return None
+
+    if data is not None:
+        bansos_value = find_bansos_value(data)
+        if bansos_value is not None:
+            return is_empty_bansos(bansos_value)
+
+    match = re.search(r"(?im)^\s*-?\s*bansos\s*[:：]\s*([^\r\n]*)", text)
+    if not match:
+        return False
+
+    return is_empty_bansos(match.group(1))
+
+
 # ============================================================
 # ENDPOINTS
 # ============================================================
@@ -454,6 +515,9 @@ def recommend(req: RecommendRequest):
             rekomendasi_teknis = "; ".join(parts)
         elif rekomendasi_teknis is not None:
             rekomendasi_teknis = str(rekomendasi_teknis).strip()
+
+        if profile_has_no_existing_bansos(core_profile):
+            rekomendasi_teknis = "-"
 
         return RecommendResponse(
             ringkasan_profil=parsed.get("ringkasan_profil", ""),
