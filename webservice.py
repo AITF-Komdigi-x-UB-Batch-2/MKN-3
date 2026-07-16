@@ -37,6 +37,7 @@ configure_utf8_stdio()
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from retrieval import PolicyRetriever, RetrievalResult
 from generation import (
@@ -464,17 +465,45 @@ def recommend(req: RecommendRequest):
         try:
             parsed = call_generation_api_checked(generation_messages)
         except HTTPException as e:
-            logger.warning(
-                "⚠️ Generation API gagal menghasilkan JSON valid, fallback deterministic dipakai: %s",
-                e.detail,
-            )
-            parsed = build_fallback_generation(core_profile, results)
+            # Jika validation/parsing error (422), fallback ke deterministic tetap dipakai
+            if e.status_code == 422:
+                logger.warning(
+                    "⚠️ Generation API gagal menghasilkan JSON valid, fallback deterministic dipakai: %s",
+                    e.detail,
+                )
+                parsed = build_fallback_generation(core_profile, results)
+            else:
+                logger.error("❌ Generation API error (HTTPException %d): %s", e.status_code, e.detail)
+                return JSONResponse(
+                    status_code=e.status_code,
+                    content={
+                        "status_code": e.status_code,
+                        "detail": e.detail
+                    }
+                )
         except Exception as e:
-            logger.warning(
-                "⚠️ Generation API Tim 1/RunPod gagal, fallback deterministic dipakai: %s",
-                e,
+            # Jika terjadi masalah server (misal: connection error, timeout, HTTP 5xx dari RunPod),
+            # return error status code alih-alih fallback ke deterministic.
+            logger.error("❌ Generation API/Server error: %s", e, exc_info=True)
+            status_code = 500
+            
+            # Coba deteksi status code dari httpx.HTTPStatusError jika dibungkus
+            cause = getattr(e, "__cause__", None)
+            if cause and isinstance(cause, httpx.HTTPStatusError):
+                status_code = cause.response.status_code
+            elif isinstance(e, httpx.HTTPStatusError):
+                status_code = e.response.status_code
+                
+            if status_code < 400:
+                status_code = 500
+                
+            return JSONResponse(
+                status_code=status_code,
+                content={
+                    "status_code": status_code,
+                    "detail": f"Terjadi masalah pada server generasi: {str(e)}"
+                }
             )
-            parsed = build_fallback_generation(core_profile, results)
         raise_if_parse_error(parsed)
         logger.info("DEBUG PARSED: %s", json.dumps(parsed, indent=2, ensure_ascii=False))
         parsed = enforce_program_eligibility_rules(parsed, core_profile)
@@ -531,11 +560,23 @@ def recommend(req: RecommendRequest):
             model_used=RUNPOD_MODEL_NAME,
         )
 
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        return JSONResponse(
+            status_code=e.status_code,
+            content={
+                "status_code": e.status_code,
+                "detail": e.detail
+            }
+        )
     except Exception as e:
         logger.error("❌ /recommend error: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status_code": 500,
+                "detail": f"Internal error: {str(e)}"
+            }
+        )
 
 @app.post("/retrieve", response_model=RetrieveOnlyResponse, tags=["Retrieval"],
           summary="Ambil hasil retrieval semantic search tanpa LLM generation")
