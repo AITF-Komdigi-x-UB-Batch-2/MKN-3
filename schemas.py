@@ -39,6 +39,7 @@ class RecommendRequest(BaseModel):
     )
     top_k: Optional[int] = Field(default=None, ge=5, le=100, description=f"Kandidat awal semantic search (default: {RETRIEVAL_TOP_K})")
     top_n: Optional[int] = Field(default=None, ge=1, le=20, description=f"Finalis semantic search (default: {RERANK_TOP_N})")
+    runpod_url: str = Field(description="URL RunPod wajib untuk endpoint LLM (disediakan oleh Tim MVP)")
 
     @model_validator(mode="after")
     def normalize_profile_from_tim4_payload(self):
