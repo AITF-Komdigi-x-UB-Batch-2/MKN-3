@@ -463,7 +463,7 @@ def recommend(req: RecommendRequest):
         ]
 
         try:
-            parsed = call_generation_api_checked(generation_messages)
+            parsed = call_generation_api_checked(generation_messages, runpod_url=req.runpod_url)
         except HTTPException as e:
             # Jika validation/parsing error (422), fallback ke deterministic tetap dipakai
             if e.status_code == 422:

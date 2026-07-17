@@ -277,9 +277,9 @@ def call_classification_api(profil_warga: str) -> str:
     )
 
 
-def call_generation_api(messages: list[dict]) -> dict:
+def call_generation_api(messages: list[dict], runpod_url: str) -> dict:
     """Panggil API Tim 1 untuk generation dan parse hasilnya (TOON atau JSON)."""
-    raw_content = call_runpod_chat_api(MKN1_GENERATION_ENDPOINT_MODEL, messages)
+    raw_content = call_runpod_chat_api(runpod_url, messages)
     return parse_llm_json(raw_content)
 
 
@@ -335,13 +335,13 @@ def is_placeholder_generation(parsed: dict) -> bool:
     return False
 
 
-def call_generation_api_checked(messages: list[dict]) -> dict:
+def call_generation_api_checked(messages: list[dict], runpod_url: str) -> dict:
     """
     Panggil generation API dengan validasi placeholder.
     Jika output pertama adalah placeholder, lakukan satu kali retry dengan instruksi ulang.
     Raise HTTPException 422 jika masih placeholder setelah retry.
     """
-    parsed = call_generation_api(messages)
+    parsed = call_generation_api(messages, runpod_url)
     if not is_placeholder_generation(parsed):
         return parsed
 
@@ -356,7 +356,7 @@ def call_generation_api_checked(messages: list[dict]) -> dict:
             ),
         }
     ]
-    parsed_retry = call_generation_api(retry_messages)
+    parsed_retry = call_generation_api(retry_messages, runpod_url)
     if is_placeholder_generation(parsed_retry):
         raise HTTPException(
             status_code=422,
