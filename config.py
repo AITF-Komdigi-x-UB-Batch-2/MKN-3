@@ -83,7 +83,7 @@ RERANK_TOP_N = RETRIEVAL_TOP_K # awalnya buat rerank, tapi ga jadi pake reranker
 # ============================================================
 # KONFIGURASI GENERATION / LLM (Stage F)
 # ============================================================
-DEFAULT_GENERATION_MODEL = os.getenv("MODEL_NAME", "aitf-ub-2026/qwen3-8b-cpt-sft-v2")
+DEFAULT_GENERATION_MODEL = os.getenv("MODEL_NAME", "ub-mkn-all")
 DEFAULT_TEMPERATURE = float(os.getenv("TEMPERATURE", "0.0"))
 
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "runpod")
